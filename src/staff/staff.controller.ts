@@ -73,4 +73,36 @@ export class StaffController {
   ) {
     return this.staffService.remove(id, user.id);
   }
+
+  @Post(':staffId/services/:serviceId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Assign کردن خدمت به کارمند' })
+  assignService(
+    @Param('staffId', new ParseUUIDPipe()) staffId: string,
+    @Param('serviceId', new ParseUUIDPipe()) serviceId: string,
+    @CurrentUser() user: AuthUserDto,
+  ) {
+    return this.staffService.assignService(staffId, serviceId, user.id);
+  }
+
+  @Delete(':staffId/services/:serviceId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Unassign کردن خدمت از کارمند' })
+  unassignService(
+    @Param('staffId', new ParseUUIDPipe()) staffId: string,
+    @Param('serviceId', new ParseUUIDPipe()) serviceId: string,
+    @CurrentUser() user: AuthUserDto,
+  ) {
+    return this.staffService.unassignService(staffId, serviceId, user.id);
+  }
+
+  @Get(':staffId/services')
+  @ApiOperation({ summary: 'دریافت لیست خدمات assign شده به کارمند' })
+  getAssignedServices(@Param('staffId', new ParseUUIDPipe()) staffId: string) {
+    return this.staffService.getAssignedServices(staffId);
+  }
 }
