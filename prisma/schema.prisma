@@ -82,7 +82,8 @@ model Service {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  staff StaffService[]
+  staff    StaffService[]
+  bookings Booking[]
 
   @@map("services")
 }
@@ -129,6 +130,7 @@ model Booking {
   staffId    String?
   staff      Staff?        @relation(fields: [staffId], references: [id])
   serviceId  String?
+  service    Service?      @relation(fields: [serviceId], references: [id])
   startTime  DateTime
   endTime    DateTime
   status     BookingStatus @default(PENDING)
@@ -139,5 +141,6 @@ model Booking {
   @@index([businessId, startTime])
   @@index([staffId, startTime])
   @@index([customerId])
+  @@index([serviceId])
   @@map("bookings")
 }

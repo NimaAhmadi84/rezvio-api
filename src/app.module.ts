@@ -11,6 +11,7 @@ import { ServicesModule } from './services/services.module';
 import { StaffModule } from './staff/staff.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { SlotsModule } from './slots/slots.module';
+import { BookingsModule } from './bookings/bookings.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { SlotsModule } from './slots/slots.module';
     StaffModule,
     AvailabilityModule,
     SlotsModule,
+    BookingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
