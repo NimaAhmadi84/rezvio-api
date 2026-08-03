@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { BusinessesModule } from './businesses/businesses.module';
 import { ServicesModule } from './services/services.module';
 import { StaffModule } from './staff/staff.module';
+import { AvailabilityModule } from './availability/availability.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { StaffModule } from './staff/staff.module';
     BusinessesModule,
     ServicesModule,
     StaffModule,
+    AvailabilityModule,
   ],
   controllers: [AppController],
   providers: [AppService],
