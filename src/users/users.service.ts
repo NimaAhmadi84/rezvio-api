@@ -9,7 +9,6 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateUserDto) {
-    // چک کن ایمیل تکراری نباشه
     const existingUser = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -18,20 +17,42 @@ export class UsersService {
       throw new ConflictException('این ایمیل قبلاً ثبت شده است');
     }
 
-    // هش کردن پسورد
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
-
-    // ساخت کاربر
+    // توجه: در اینجا فرض می‌کنیم password از قبل هش شده است (توسط AuthService)
+    // اگر از CreateUserDto مستقیم استفاده شود، باید هش شود
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
         name: dto.name,
-        password: hashedPassword,
+        password: dto.password,
         role: dto.role,
       },
     });
 
-    // حذف فیلد password از response
+    const { password, ...result } = user;
+    return result;
+  }
+
+  /**
+   * ساخت کاربر با پسورد از پیش هش شده (برای استفاده در AuthService)
+   */
+  async createWithHashedPassword(dto: {
+    email: string;
+    name: string;
+    password: string;
+    role: any;
+  }) {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('این ایمیل قبلاً ثبت شده است');
+    }
+
+    const user = await this.prisma.user.create({
+      data: dto,
+    });
+
     const { password, ...result } = user;
     return result;
   }
@@ -77,9 +98,8 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto) {
-    await this.findOne(id); // چک کن کاربر وجود داره
+    await this.findOne(id);
 
-    // اگه پسورد داره، هشش کن
     if (dto.password) {
       dto.password = await bcrypt.hash(dto.password, 10);
     }
@@ -101,7 +121,7 @@ export class UsersService {
   }
 
   async remove(id: string) {
-    await this.findOne(id); // چک کن کاربر وجود داره
+    await this.findOne(id);
 
     await this.prisma.user.delete({
       where: { id },
