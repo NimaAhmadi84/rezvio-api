@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum UserRole {
@@ -30,8 +29,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  businesses Business[]
-  bookings   Booking[]
+  ownedBusinesses Business[] @relation("BusinessOwner")
+  bookings        Booking[]  @relation("CustomerBookings")
 
   @@map("users")
 }
@@ -42,33 +41,32 @@ model Business {
   slug      String   @unique
   address   String?
   phone     String?
+  ownerId   String
+  owner     User     @relation("BusinessOwner", fields: [ownerId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  ownerId String
-  owner   User   @relation(fields: [ownerId], references: [id])
-
-  staff         Staff[]
-  services      Service[]
-  bookings      Booking[]
-  businessHours BusinessHour[]
-  holidays      Holiday[]
+  staff          Staff[]
+  services       Service[]
+  bookings       Booking[]
+  businessHours  BusinessHour[]
+  holidays       Holiday[]
 
   @@map("businesses")
 }
 
 model Staff {
-  id        String   @id @default(uuid())
-  name      String
-  email     String?
-  phone     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  id         String   @id @default(uuid())
+  name       String
+  email      String?
+  phone      String?
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   services StaffService[]
+  bookings Booking[]
 
   @@map("staff")
 }
@@ -79,11 +77,10 @@ model Service {
   description     String?
   durationMinutes Int
   price           Float
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
-
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id])
 
   staff StaffService[]
 
@@ -91,56 +88,56 @@ model Service {
 }
 
 model StaffService {
-  id String @id @default(uuid())
-
-  staffId String
-  staff   Staff @relation(fields: [staffId], references: [id])
-
+  id        String  @id @default(uuid())
+  staffId   String
   serviceId String
-  service   Service @relation(fields: [serviceId], references: [id])
+  staff     Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@unique([staffId, serviceId])
   @@map("staff_services")
 }
 
 model BusinessHour {
-  id        String @id @default(uuid())
-  dayOfWeek Int // 0 = Sunday, 6 = Saturday
-  openTime  String // "HH:MM" format
-  closeTime String // "HH:MM" format
-
+  id         String   @id @default(uuid())
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int // 0=Saturday ... 6=Friday (Iran week)
+  openTime   String // HH:MM format
+  closeTime  String // HH:MM format
 
-  @@unique([businessId, dayOfWeek])
   @@map("business_hours")
 }
 
 model Holiday {
-  id        String   @id @default(uuid())
-  date      DateTime @db.Date
-  reason    String?
-  createdAt DateTime @default(now())
-
+  id         String   @id @default(uuid())
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  date       DateTime @db.Date
+  reason     String?
+  createdAt  DateTime @default(now())
 
   @@map("holidays")
 }
 
 model Booking {
-  id        String        @id @default(uuid())
-  status    BookingStatus @default(PENDING)
-  startTime DateTime
-  endTime   DateTime
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-
+  id         String        @id @default(uuid())
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
-
+  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customerId String
-  customer   User @relation(fields: [customerId], references: [id])
+  customer   User          @relation("CustomerBookings", fields: [customerId], references: [id])
+  staffId    String?
+  staff      Staff?        @relation(fields: [staffId], references: [id])
+  serviceId  String?
+  startTime  DateTime
+  endTime    DateTime
+  status     BookingStatus @default(PENDING)
+  notes      String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
 
+  @@index([businessId, startTime])
+  @@index([staffId, startTime])
+  @@index([customerId])
   @@map("bookings")
 }
