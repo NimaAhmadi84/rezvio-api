@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsEmail, IsEnum, IsString, IsOptional, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
@@ -24,6 +24,7 @@ export class RegisterDto {
   password!: string;
 
   @ApiProperty({ enum: UserRole, default: UserRole.CUSTOMER, required: false })
+  @IsOptional()
   @IsEnum(UserRole, { message: 'نقش انتخابی نامعتبر است' })
   role?: UserRole;
 }
