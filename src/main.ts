@@ -23,7 +23,7 @@ async function bootstrap() {
 
   // Swagger - مستندسازی خودکار API
   const config = new DocumentBuilder()
-    .setTitle('Reservino API')
+    .setTitle('Rezvio API')
     .setDescription('Multi-tenant booking SaaS API')
     .setVersion('1.0')
     .addBearerAuth()
@@ -33,7 +33,7 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3001;
   await app.listen(port);
-  console.log(`🚀 Reservino API running on http://localhost:${port}`);
+  console.log(`🚀 Rezvio API running on http://localhost:${port}`);
   console.log(`📚 Swagger docs: http://localhost:${port}/api/docs`);
 }
 bootstrap();
