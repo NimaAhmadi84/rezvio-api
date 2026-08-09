@@ -23,6 +23,7 @@ enum BookingStatus {
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
+  phone     String?  @unique
   password  String
   name      String
   role      UserRole @default(CUSTOMER)
@@ -106,6 +107,7 @@ model BusinessHour {
   dayOfWeek  Int // 0=Saturday ... 6=Friday (Iran week)
   openTime   String // HH:MM format
   closeTime  String // HH:MM format
+  createdAt DateTime @default(now())
 
   @@map("business_hours")
 }
