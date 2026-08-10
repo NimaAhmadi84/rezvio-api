@@ -18,4 +18,15 @@ export class VerifyOtpDto {
   @MinLength(2, { message: 'نام باید حداقل ۲ کاراکتر باشد' })
   @MaxLength(100)
   name?: string;
+
+  @ApiPropertyOptional({ example: '09123456789', description: 'شماره تماس (الزامی برای ثبت‌نام)' })
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @ApiPropertyOptional({ example: 'StrongPass123' })
+  @IsOptional()
+  @IsString()
+  @MinLength(8, { message: 'رمز عبور باید حداقل ۸ کاراکتر باشد' })
+  password?: string;
 }

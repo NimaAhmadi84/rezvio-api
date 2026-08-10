@@ -116,13 +116,12 @@ export class AuthService {
   }
 
   // Auto-login یا auto-register بعد از OTP verify
-  async loginOrCreate(identifier: string, name?: string): Promise<AuthResponseDto & { isNew: boolean }> {
+  async loginOrCreate(identifier: string, name?: string, phone?: string, password?: string): Promise<AuthResponseDto & { isNew: boolean }> {
     const isEmail = identifier.includes('@');
     let user = await this.usersService.findByEmailOrPhone(identifier);
     let isNew = false;
 
     if (!user) {
-      // ثبت‌نام خودکار
       const data: any = { role: 'CUSTOMER' };
       if (isEmail) {
         data.email = identifier;
@@ -130,9 +129,14 @@ export class AuthService {
         data.phone = identifier;
       }
       if (name) data.name = name;
+      if (phone) data.phone = phone; // ذخیره شماره تماس
+      if (password) {
+        data.password = await bcrypt.hash(password, 10); // هش کردن رمز عبور
+      }
+      
       user = await this.usersService.createMinimal(data);
       isNew = true;
-      this.logger.log('🆕 کاربر جدید ثبت‌نام شد: ' + identifier);
+      this.logger.log('🆕 کاربر جدید ثبت‌نام شد: ' + identifier + ' | Phone: ' + (phone || 'N/A'));
     }
 
     const response = await this.generateTokens(this.toAuthUserDto(user));
