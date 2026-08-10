@@ -13,6 +13,8 @@ import { AvailabilityModule } from './availability/availability.module';
 import { SlotsModule } from './slots/slots.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { EmailModule } from './email/email.module';
+import { SmsModule } from './sms/sms.module';
+import { OtpModule } from './otp/otp.module';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { EmailModule } from './email/email.module';
     SlotsModule,
     BookingsModule,
     EmailModule,
+    SmsModule,
+    OtpModule,
   ],
   controllers: [AppController],
   providers: [AppService],
