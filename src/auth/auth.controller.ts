@@ -19,6 +19,8 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { CheckIdentifierDto } from './dto/check-identifier.dto';
+import { LoginPasswordDto } from './dto/login-password.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -81,6 +83,33 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'احراز هویت نشده' })
   getProfile(@CurrentUser() user: any) {
     return user;
+  }
+
+  @Post('check-identifier')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'بررسی وجود کاربر با شناسه' })
+  @ApiResponse({ status: 200, description: 'نتیجه بررسی' })
+  async checkIdentifier(@Body() dto: CheckIdentifierDto) {
+    const isEmail = dto.identifier.includes('@');
+    const user = await this.authService['usersService'].findByEmailOrPhone(dto.identifier);
+    return {
+      exists: !!user,
+      methods: user
+        ? (user.password ? ['password', 'otp'] : ['otp'])
+        : ['register'],
+      hasPassword: user?.password ? true : false,
+      identifier: dto.identifier,
+      identifierType: isEmail ? 'email' : 'phone',
+    };
+  }
+
+  @Post('login-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'ورود با رمز عبور' })
+  @ApiResponse({ status: 200, description: 'ورود موفق', type: AuthResponseDto })
+  @ApiResponse({ status: 401, description: 'شناسه یا رمز اشتباه' })
+  async loginWithPassword(@Body() dto: LoginPasswordDto): Promise<AuthResponseDto> {
+    return this.authService.loginWithPassword(dto.identifier, dto.password);
   }
 
   @Get('admin-only')

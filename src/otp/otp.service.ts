@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { SmsService } from '../sms/sms.service';
+import { AuthService } from '../auth/auth.service';
 
 const OTP_TTL_MINUTES = 5;
 const MAX_ATTEMPTS = 3;
@@ -18,6 +19,7 @@ export class OtpService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly smsService: SmsService,
+    private readonly authService: AuthService,
   ) {}
 
   // تبدیل اعداد فارسی به انگلیسی + trim
@@ -64,7 +66,7 @@ export class OtpService {
   }
 
   // فقط validation کد - login در Phase 3E
-  async verifyCode(rawIdentifier: string, code: string): Promise<{ identifier: string }> {
+  async verifyCode(rawIdentifier: string, code: string, name?: string): Promise<any> {
     const identifier = this.normalize(rawIdentifier);
 
     const otp = await this.prisma.otpCode.findFirst({
@@ -90,6 +92,12 @@ export class OtpService {
     }
 
     await this.prisma.otpCode.update({ where: { id: otp.id }, data: { verified: true } });
-    return { identifier };
+
+    // Auto-login یا auto-register + JWT
+    const result = await this.authService.loginOrCreate(identifier, name);
+    return {
+      ...result,
+      otpVerified: true,
+    };
   }
 }

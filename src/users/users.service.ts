@@ -129,4 +129,24 @@ export class UsersService {
 
     return { message: 'کاربر با موفقیت حذف شد' };
   }
+
+  // پیدا کردن کاربر با ایمیل یا شماره
+  async findByEmailOrPhone(identifier: string) {
+    const isEmail = identifier.includes('@');
+    if (isEmail) {
+      return this.prisma.user.findUnique({ where: { email: identifier } });
+    }
+    // فرض: اگه ایمیل نیست، شماره است
+    return this.prisma.user.findUnique({ where: { phone: identifier } });
+  }
+
+  // ساخت کاربر جدید با حداقل اطلاعات (برای OTP auto-register)
+  async createMinimal(data: { email?: string; phone?: string; password?: string; name?: string; role?: any }) {
+    return this.prisma.user.create({ data: data as any });
+  }
+
+  // آپدیت user (برای اضافه کردن password/name بعداً)
+  async updateUser(id: string, data: any) {
+    return this.prisma.user.update({ where: { id }, data });
+  }
 }

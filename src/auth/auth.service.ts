@@ -102,6 +102,43 @@ export class AuthService {
     }
   }
 
+  // ورود با identifier (email یا phone) + password
+  async loginWithPassword(identifier: string, password: string): Promise<AuthResponseDto> {
+    const user = await this.usersService.findByEmailOrPhone(identifier);
+    if (!user || !user.password) {
+      throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
+    }
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
+    }
+    return this.generateTokens(this.toAuthUserDto(user));
+  }
+
+  // Auto-login یا auto-register بعد از OTP verify
+  async loginOrCreate(identifier: string, name?: string): Promise<AuthResponseDto & { isNew: boolean }> {
+    const isEmail = identifier.includes('@');
+    let user = await this.usersService.findByEmailOrPhone(identifier);
+    let isNew = false;
+
+    if (!user) {
+      // ثبت‌نام خودکار
+      const data: any = { role: 'CUSTOMER' };
+      if (isEmail) {
+        data.email = identifier;
+      } else {
+        data.phone = identifier;
+      }
+      if (name) data.name = name;
+      user = await this.usersService.createMinimal(data);
+      isNew = true;
+      this.logger.log('🆕 کاربر جدید ثبت‌نام شد: ' + identifier);
+    }
+
+    const response = await this.generateTokens(this.toAuthUserDto(user));
+    return { ...response, isNew };
+  }
+
   private async generateTokens(user: AuthUserDto): Promise<AuthResponseDto> {
     const payload: JwtPayload = {
       sub: user.id,

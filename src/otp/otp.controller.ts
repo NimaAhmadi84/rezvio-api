@@ -20,6 +20,6 @@ export class OtpController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'تأیید کد یکبار مصرف' })
   async verify(@Body() dto: VerifyOtpDto) {
-    return this.otpService.verifyCode(dto.identifier, dto.code);
+    return this.otpService.verifyCode(dto.identifier, dto.code, dto.name);
   }
 }
