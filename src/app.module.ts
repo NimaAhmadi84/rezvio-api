@@ -12,6 +12,7 @@ import { StaffModule } from './staff/staff.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { SlotsModule } from './slots/slots.module';
 import { BookingsModule } from './bookings/bookings.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { BookingsModule } from './bookings/bookings.module';
     AvailabilityModule,
     SlotsModule,
     BookingsModule,
+    EmailModule,
   ],
   controllers: [AppController],
   providers: [AppService],
