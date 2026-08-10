@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 
+import { UserRole } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
@@ -30,7 +31,7 @@ export class AuthService {
   async validateUser(email: string, password: string): Promise<AuthUserDto | null> {
     const user = await this.usersService.findByEmail(email);
 
-    if (!user) {
+    if (!user || !user.password) {
       return null;
     }
 
@@ -56,7 +57,7 @@ export class AuthService {
       email: dto.email,
       name: dto.name,
       password: hashedPassword,
-      role: dto.role ?? ('CUSTOMER' as any),
+      role: dto.role ?? ('CUSTOMER' as UserRole),
     });
 
     return this.generateTokens(user);
@@ -135,14 +136,16 @@ export class AuthService {
 
   private toAuthUserDto(user: {
     id: string;
-    email: string;
-    name: string;
+    email?: string | null;
+    phone?: string | null;
+    name?: string | null;
     role: any;
     createdAt: Date;
   }): AuthUserDto {
     const dto = new AuthUserDto();
     dto.id = user.id;
     dto.email = user.email;
+    dto.phone = user.phone;
     dto.name = user.name;
     dto.role = user.role;
     dto.createdAt = user.createdAt;

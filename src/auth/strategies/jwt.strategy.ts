@@ -35,6 +35,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const dto = new AuthUserDto();
     dto.id = user.id;
     dto.email = user.email;
+    dto.phone = (user as any).phone ?? null;
     dto.name = user.name;
     dto.role = user.role;
     dto.createdAt = user.createdAt;

@@ -22,10 +22,10 @@ enum BookingStatus {
 
 model User {
   id        String   @id @default(uuid())
-  email     String   @unique
+  email     String?   @unique
   phone     String?  @unique
-  password  String
-  name      String
+  password  String?
+  name      String?
   role      UserRole @default(CUSTOMER)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -145,4 +145,19 @@ model Booking {
   @@index([customerId])
   @@index([serviceId])
   @@map("bookings")
+}
+
+
+model OtpCode {
+  id         String   @id @default(uuid())
+  identifier String   // email یا شماره تماس
+  code       String   // کد ۶ رقمی
+  attempts   Int      @default(0)
+  verified   Boolean  @default(false)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([identifier])
+  @@index([expiresAt])
+  @@map("otp_codes")
 }
