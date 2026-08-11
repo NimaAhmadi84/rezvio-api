@@ -115,28 +115,62 @@ export class AuthService {
     return this.generateTokens(this.toAuthUserDto(user));
   }
 
-  // Auto-login یا auto-register بعد از OTP verify
-  async loginOrCreate(identifier: string, name?: string, phone?: string, password?: string): Promise<AuthResponseDto & { isNew: boolean }> {
+  /**
+   * Auto-login یا auto-register بعد از OTP verify
+   *
+   * - identifier: شناسه اصلی (ایمیل یا شماره‌ای که OTP بهش ارسال شده)
+   * - name, phone, email, password: اطلاعات تکمیلی از فرم ثبت‌نام
+   *
+   * منطق ذخیره‌سازی:
+   *   - اگه user جدید باشه، از identifier به عنوان اصلی استفاده می‌کنیم
+   *   - phone و email از فرم register می‌تونن فیلدهای دوم رو پر کنن
+   *   - مثال: identifier=ایمیل، phone از فرم → کاربر هم email داره هم phone
+   */
+  async loginOrCreate(
+    identifier: string,
+    name?: string,
+    phone?: string,
+    email?: string,
+    password?: string,
+  ): Promise<AuthResponseDto & { isNew: boolean }> {
     const isEmail = identifier.includes('@');
     let user = await this.usersService.findByEmailOrPhone(identifier);
     let isNew = false;
 
     if (!user) {
       const data: any = { role: 'CUSTOMER' };
+
+      // شناسه اصلی (همون چیزی که OTP بهش ارسال شده)
       if (isEmail) {
         data.email = identifier;
       } else {
         data.phone = identifier;
       }
+
+      // اطلاعات تکمیلی از فرم register
       if (name) data.name = name;
-      if (phone) data.phone = phone; // ذخیره شماره تماس
-      if (password) {
-        data.password = await bcrypt.hash(password, 10); // هش کردن رمز عبور
+
+      // اگه identifier ایمیل بود و phone جداگانه داده شد → phone رو هم ذخیره کن
+      if (isEmail && phone && phone !== identifier) {
+        data.phone = phone;
       }
-      
+
+      // اگه identifier شماره بود و email جداگانه داده شد → email رو هم ذخیره کن
+      if (!isEmail && email && email !== identifier) {
+        data.email = email;
+      }
+
+      // هش کردن رمز عبور (اگه داده شده)
+      if (password) {
+        data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+      }
+
       user = await this.usersService.createMinimal(data);
       isNew = true;
-      this.logger.log('🆕 کاربر جدید ثبت‌نام شد: ' + identifier + ' | Phone: ' + (phone || 'N/A'));
+      this.logger.log(
+        `🆕 کاربر جدید ثبت‌نام شد: ${identifier} | ` +
+        `Phone: ${data.phone || 'N/A'} | Email: ${data.email || 'N/A'}`,
+      );
     }
 
     const response = await this.generateTokens(this.toAuthUserDto(user));

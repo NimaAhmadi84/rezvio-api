@@ -65,8 +65,14 @@ export class OtpService {
     return { success: true, expiresIn: OTP_TTL_MINUTES };
   }
 
-  // فقط validation کد - login در Phase 3E
-  async verifyCode(rawIdentifier: string, code: string, name?: string): Promise<any> {
+  async verifyCode(
+    rawIdentifier: string,
+    code: string,
+    name?: string,
+    phone?: string,
+    email?: string,
+    password?: string,
+  ): Promise<any> {
     const identifier = this.normalize(rawIdentifier);
 
     const otp = await this.prisma.otpCode.findFirst({
@@ -93,8 +99,14 @@ export class OtpService {
 
     await this.prisma.otpCode.update({ where: { id: otp.id }, data: { verified: true } });
 
-    // Auto-login یا auto-register + JWT
-    const result = await this.authService.loginOrCreate(identifier, name);
+    // Auto-login یا auto-register + JWT (با همه فیلدهای ثبت‌نام)
+    const result = await this.authService.loginOrCreate(
+      identifier,
+      name,
+      phone,
+      email,
+      password,
+    );
     return {
       ...result,
       otpVerified: true,

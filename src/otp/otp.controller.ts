@@ -18,8 +18,15 @@ export class OtpController {
 
   @Post('verify')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'تأیید کد یکبار مصرف' })
+  @ApiOperation({ summary: 'تأیید کد یکبار مصرف + ورود/ثبت‌نام خودکار' })
   async verify(@Body() dto: VerifyOtpDto) {
-    return this.otpService.verifyCode(dto.identifier, dto.code, dto.name);
+    return this.otpService.verifyCode(
+      dto.identifier,
+      dto.code,
+      dto.name,
+      dto.phone,
+      dto.email,
+      dto.password,
+    );
   }
 }
