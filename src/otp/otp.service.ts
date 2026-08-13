@@ -22,7 +22,6 @@ export class OtpService {
     private readonly authService: AuthService,
   ) {}
 
-  // تبدیل اعداد فارسی به انگلیسی + trim
   private normalize(input: string): string {
     const faToEn = (s: string) =>
       s.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
@@ -32,35 +31,48 @@ export class OtpService {
 
   private detectType(identifier: string): IdentifierType {
     if (identifier.includes('@')) return 'email';
-    if (/^09\d{9}$/.test(identifier)) return 'phone';
-    throw new BadRequestException('شناسه معتبر نیست. لطفاً ایمیل یا شماره تماس وارد کنید');
+    if (/^09\d{9}$/.test(identifier)) {
+      throw new BadRequestException('در حال حاضر ارسال کد تایید از طریق پیامک غیرفعال است. لطفاً از ایمیل استفاده کنید.');
+    }
+    throw new BadRequestException('شناسه معتبر نیست. لطفاً ایمیل معتبر وارد کنید.');
   }
 
   async request(rawIdentifier: string): Promise<{ success: boolean; expiresIn: number }> {
     const identifier = this.normalize(rawIdentifier);
     const type = this.detectType(identifier);
 
-    // Rate limiting
     const windowStart = new Date(Date.now() - WINDOW_MINUTES * 60000);
-    const recentCount = await this.prisma.otpCode.count({
+    const recentRequests = await this.prisma.otpCode.findMany({
       where: { identifier, createdAt: { gte: windowStart } },
+      orderBy: { createdAt: 'desc' },
     });
-    if (recentCount >= MAX_REQUESTS_PER_WINDOW) {
-      throw new BadRequestException('تعداد درخواست‌ها بیش از حد مجاز است. لطفاً چند دقیقه صبر کنید');
+
+    if (recentRequests.length >= MAX_REQUESTS_PER_WINDOW) {
+      // ──── محاسبه زمان دقیق تا درخواست بعدی ────
+      const oldestRequest = recentRequests[recentRequests.length - 1];
+      const nextAllowedTime = new Date(oldestRequest.createdAt.getTime() + WINDOW_MINUTES * 60000);
+      const secondsUntilNext = Math.ceil((nextAllowedTime.getTime() - Date.now()) / 1000);
+      
+      const minutes = Math.floor(secondsUntilNext / 60);
+      const seconds = secondsUntilNext % 60;
+      
+      let timeMessage = '';
+      if (minutes > 0) {
+        timeMessage = `${minutes} دقیقه و ${seconds} ثانیه`;
+      } else {
+        timeMessage = `${seconds} ثانیه`;
+      }
+      
+      throw new BadRequestException(
+        `تعداد درخواست‌های شما بیش از حد مجاز است. لطفاً ${timeMessage} دیگر دوباره تلاش کنید.`,
+      );
     }
 
-    // تولید کد ۶ رقمی
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60000);
-
     await this.prisma.otpCode.create({ data: { identifier, code, expiresAt } });
 
-    // ارسال بر اساس نوع
-    if (type === 'email') {
-      await this.emailService.sendOtpEmail(identifier, code, OTP_TTL_MINUTES);
-    } else {
-      await this.smsService.sendOtpSms(identifier, code, OTP_TTL_MINUTES);
-    }
+    await this.emailService.sendOtpEmail(identifier, code, OTP_TTL_MINUTES);
 
     return { success: true, expiresIn: OTP_TTL_MINUTES };
   }
@@ -80,36 +92,21 @@ export class OtpService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!otp) {
-      throw new BadRequestException('کدی یافت نشد. لطفاً ابتدا درخواست کد دهید');
-    }
-    if (otp.expiresAt < new Date()) {
-      throw new BadRequestException('کد منقضی شده است. لطفاً دوباره درخواست دهید');
-    }
-    if (otp.attempts >= MAX_ATTEMPTS) {
-      throw new BadRequestException('تعداد تلاش‌های ناموفق تمام شد. لطفاً دوباره درخواست کد دهید');
-    }
+    if (!otp) throw new BadRequestException('کدی یافت نشد. لطفاً ابتدا درخواست کد دهید.');
+    if (otp.expiresAt < new Date()) throw new BadRequestException('کد منقضی شده است. لطفاً دوباره درخواست دهید.');
+    if (otp.attempts >= MAX_ATTEMPTS) throw new BadRequestException('تعداد تلاش‌های ناموفق تمام شد. لطفاً دوباره درخواست کد دهید.');
+    
     if (otp.code !== code) {
       await this.prisma.otpCode.update({
         where: { id: otp.id },
         data: { attempts: otp.attempts + 1 },
       });
-      throw new BadRequestException('کد وارد شده صحیح نیست');
+      throw new BadRequestException('کد وارد شده صحیح نیست.');
     }
 
     await this.prisma.otpCode.update({ where: { id: otp.id }, data: { verified: true } });
 
-    // Auto-login یا auto-register + JWT (با همه فیلدهای ثبت‌نام)
-    const result = await this.authService.loginOrCreate(
-      identifier,
-      name,
-      phone,
-      email,
-      password,
-    );
-    return {
-      ...result,
-      otpVerified: true,
-    };
+    const result = await this.authService.loginOrCreate(identifier, name, phone, email, password);
+    return { ...result, otpVerified: true };
   }
 }
