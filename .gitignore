@@ -62,3 +62,4 @@ test-auth.sh
 # AI IDE skills (Claude Code, Windsurf)
 .claude/
 .windsurf/
+scripts/
