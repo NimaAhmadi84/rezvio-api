@@ -3,14 +3,18 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { nanoid } from 'nanoid';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
 
 @Injectable()
 export class BusinessesService {
+  private readonly logger = new Logger(BusinessesService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -19,14 +23,13 @@ export class BusinessesService {
   private generateSlug(name: string): string {
     const baseSlug = name
       .toLowerCase()
-      .replace(/[^\w\s-]/g, '') // حذف کاراکترهای خاص
-      .replace(/\s+/g, '-') // تبدیل فاصله به -
-      .replace(/-+/g, '-') // حذف - های تکراری
+      .replace(/[^\w\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
       .trim();
 
-    // اگه slug خالی بود (مثل نام فارسی)، از nanoid استفاده کن
     if (!baseSlug || baseSlug === '-') {
-      return nanoid(10); // slug کوتاه 10 کاراکتری
+      return nanoid(10);
     }
 
     return baseSlug;
@@ -45,6 +48,84 @@ export class BusinessesService {
     }
 
     return slug;
+  }
+
+  /**
+   * ساخت کسب‌وکار با ارتقا خودکار نقش (Phase 10)
+   *
+   * منطق:
+   * - اگه کاربر CUSTOMER باشه → در یک transaction:
+   *     1. ارتقا role به OWNER
+   *     2. ساخت business
+   * - اگه کاربر OWNER یا ADMIN باشه → فقط business ساخته می‌شه
+   *
+   * استفاده از $transaction برای جلوگیری از race condition:
+   * اگه یه لحظه بین ارتقا و ساخت business خطا بیفته،
+   * کاربر بدون business به OWNER ارتقا پیدا نمی‌کنه.
+   */
+  async createWithRoleUpgrade(
+    userId: string,
+    currentRole: UserRole,
+    dto: CreateBusinessDto,
+  ) {
+    const baseSlug = this.generateSlug(dto.name);
+    const slug = await this.ensureUniqueSlug(baseSlug);
+
+    // اگه کاربر CUSTOMER هست، باید به OWNER ارتقا پیدا کنه
+    const shouldUpgrade = currentRole === UserRole.CUSTOMER;
+
+    if (shouldUpgrade) {
+      this.logger.log(`🚀 ارتقا کاربر ${userId} از CUSTOMER به OWNER`);
+
+      // همه چیز در یک transaction
+      const result = await this.prisma.$transaction(async (tx) => {
+        // 1. ارتقا نقش
+        await tx.user.update({
+          where: { id: userId },
+          data: { role: UserRole.OWNER },
+        });
+
+        // 2. ساخت business
+        const business = await tx.business.create({
+          data: {
+            name: dto.name,
+            slug,
+            address: dto.address,
+            phone: dto.phone,
+            ownerId: userId,
+          },
+        });
+
+        return business;
+      });
+
+      this.logger.log(`✅ کسب‌وکار "${dto.name}" ساخته شد + کاربر به OWNER ارتقا یافت`);
+
+      return {
+        ...result,
+        roleUpgraded: true,
+        newRole: UserRole.OWNER,
+      };
+    }
+
+    // اگه کاربر قبلاً OWNER یا ADMIN هست، فقط business می‌سازیم
+    const business = await this.prisma.business.create({
+      data: {
+        name: dto.name,
+        slug,
+        address: dto.address,
+        phone: dto.phone,
+        ownerId: userId,
+      },
+    });
+
+    this.logger.log(`✅ کسب‌وکار "${dto.name}" ساخته شد (کاربر از قبل ${currentRole} بود)`);
+
+    return {
+      ...business,
+      roleUpgraded: false,
+      newRole: currentRole,
+    };
   }
 
   async create(userId: string, dto: CreateBusinessDto) {
@@ -119,11 +200,7 @@ export class BusinessesService {
     const business = await this.prisma.business.findUnique({
       where: { slug },
       include: {
-        services: {
-          where: {
-            // فقط service های فعال (بعداً فیلد active اضافه می‌کنیم)
-          },
-        },
+        services: {},
         staff: true,
         businessHours: {
           orderBy: { dayOfWeek: 'asc' },
@@ -138,9 +215,6 @@ export class BusinessesService {
     return business;
   }
 
-  /**
-   * بررسی مالکیت (فقط OWNER می‌تونه business خودش رو ویرایش کنه)
-   */
   async checkOwnership(businessId: string, userId: string): Promise<void> {
     const business = await this.prisma.business.findUnique({
       where: { id: businessId },
@@ -157,7 +231,6 @@ export class BusinessesService {
   }
 
   async update(id: string, userId: string, dto: UpdateBusinessDto) {
-    // بررسی مالکیت
     await this.checkOwnership(id, userId);
 
     const business = await this.prisma.business.update({
@@ -169,7 +242,6 @@ export class BusinessesService {
   }
 
   async remove(id: string, userId: string) {
-    // بررسی مالکیت
     await this.checkOwnership(id, userId);
 
     await this.prisma.business.delete({
@@ -179,9 +251,6 @@ export class BusinessesService {
     return { message: 'کسب‌وکار با موفقیت حذف شد' };
   }
 
-  /**
-   * دریافت لیست کسب‌وکارهای یک کاربر (Owner)
-   */
   async findByOwner(ownerId: string) {
     return this.prisma.business.findMany({
       where: { ownerId },
