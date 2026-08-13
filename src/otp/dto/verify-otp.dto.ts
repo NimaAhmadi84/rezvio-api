@@ -1,4 +1,4 @@
-import { IsString, IsOptional, Length, Matches, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsEmail, Length, Matches, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class VerifyOtpDto {
@@ -19,10 +19,15 @@ export class VerifyOtpDto {
   @MaxLength(100)
   name?: string;
 
-  @ApiPropertyOptional({ example: '09123456789', description: 'شماره تماس (الزامی برای ثبت‌نام)' })
+  @ApiPropertyOptional({ example: '09123456789', description: 'شماره تماس (برای ذخیره در ثبت‌نام)' })
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @ApiPropertyOptional({ example: 'user@example.com', description: 'ایمیل (برای ذخیره در ثبت‌نام)' })
+  @IsOptional()
+  @IsEmail({}, { message: 'فرمت ایمیل صحیح نیست' })
+  email?: string;
 
   @ApiPropertyOptional({ example: 'StrongPass123' })
   @IsOptional()
