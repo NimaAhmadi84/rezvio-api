@@ -67,3 +67,4 @@ scripts/
 # Test scripts
 test-refresh.sh
 test-auth.sh
+test-custom-slug.sh

@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   ParseUUIDPipe,
+  Query,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 
@@ -27,14 +28,7 @@ export class BusinessesController {
   constructor(private readonly businessesService: BusinessesService) {}
 
   /**
-   * ساخت کسب‌وکار جدید
-   *
-   * منطق ارتقا خودکار:
-   * - اگه کاربر CUSTOMER باشه → به OWNER ارتقا می‌یابه
-   * - اگه کاربر OWNER باشه → همون OWNER می‌مونه
-   * - اگه کاربر ADMIN باشه → همون ADMIN می‌مونه
-   *
-   * همه این ارتقاها + ساخت business در یک transaction انجام می‌شه
+   * ساخت کسب‌وکار جدید + ارتقا خودکار CUSTOMER به OWNER
    */
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -42,11 +36,37 @@ export class BusinessesController {
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'ساخت کسب‌وکار جدید + ارتقا خودکار CUSTOMER به OWNER',
-    description: 'هر کاربر authenticated می‌تونه کسب‌وکار بسازه. اگه CUSTOMER باشه، به OWNER ارتقا می‌یابه.',
+    description:
+      'هر کاربر authenticated می‌تونه کسب‌وکار بسازه. اگه CUSTOMER باشه، به OWNER ارتقا می‌یابه. اگه customSlug داده بشه، به عنوان slug استفاده می‌شه.',
   })
   @ApiResponse({ status: 201, description: 'کسب‌وکار با موفقیت ساخته شد' })
   create(@CurrentUser() user: AuthUserDto, @Body() dto: CreateBusinessDto) {
     return this.businessesService.createWithRoleUpgrade(user.id, user.role, dto);
+  }
+
+  /**
+   * بررسی آزاد بودن slug (Real-time check برای frontend)
+   *
+   * نکته: slug رو بدون lowercase به service می‌فرستیم
+   * چون service خودش lowercase و validation می‌کنه.
+   * این باعث می‌شه بتونیم حروف بزرگ رو تشخیص بدیم و رد کنیم.
+   */
+  @Get('check-slug')
+  @ApiOperation({
+    summary: 'بررسی آزاد بودن slug (عمومی)',
+    description:
+      'برای بررسی real-time در فرم ساخت کسب‌وکار. اگه گرفته شده باشه، یه slug جایگزین پیشنهاد می‌ده. اگه حروف بزرگ داشته باشه، رد می‌کنه.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: '{ available: boolean, finalSlug: string, reason?: string }',
+  })
+  checkSlug(@Query('slug') slug: string) {
+    if (!slug || typeof slug !== 'string') {
+      return { available: false, finalSlug: '', reason: 'slug الزامی است' };
+    }
+    // slug رو بدون lowercase بفرست - service خودش lowercase و validate می‌کنه
+    return this.businessesService.checkSlugAvailability(slug.trim());
   }
 
   @Get()
