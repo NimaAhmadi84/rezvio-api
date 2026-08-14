@@ -1,4 +1,4 @@
-import { IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
+import { IsString, MinLength, MaxLength, IsOptional, Matches, IsUrl } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateBusinessDto {
@@ -8,20 +8,6 @@ export class CreateBusinessDto {
   @MaxLength(100, { message: 'نام کسب‌وکار نباید بیش از ۱۰۰ کاراکتر باشد' })
   name!: string;
 
-  /**
-   * آدرس اختصاصی (اختیاری - SEO-friendly)
-   *
-   * در صورت ارائه، این مقدار به عنوان slug استفاده می‌شه.
-   * در صورت عدم ارائه، از نام ساخته می‌شه (با fallback به nanoid برای فارسی).
-   *
-   * قوانین:
-   * - فقط حروف کوچک انگلیسی (a-z)، اعداد (0-9) و - مجاز
-   * - حداقل ۳ و حداکثر ۵۰ کاراکتر
-   * - نمی‌تونه با - شروع یا تموم بشه
-   *
-   * مثال خوب: nima-barber, ali-salon-2026, beauty-tehran
-   * مثال بد: Nima-Barber (حروف بزرگ), علی_آرایشگاه (فارسی)
-   */
   @ApiPropertyOptional({
     example: 'nima-barber',
     description: 'آدرس اختصاصی (اختیاری). فقط حروف کوچک انگلیسی، اعداد و - مجاز است',
@@ -46,4 +32,22 @@ export class CreateBusinessDto {
   @IsString()
   @IsOptional()
   phone?: string;
+
+  @ApiPropertyOptional({
+    example: 'آرایشگاه مدرن با بیش از ۱۰ سال سابقه در ارائه خدمات اصلاح و پیرایش مردانه',
+    description: 'توضیحات کسب‌وکار (اختیاری)',
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(2000, { message: 'توضیحات نباید بیش از ۲۰۰۰ کاراکتر باشد' })
+  description?: string;
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/logo.png',
+    description: 'URL لوگو یا عکس کسب‌وکار (اختیاری)',
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(500, { message: 'URL لوگو نباید بیش از ۵۰۰ کاراکتر باشد' })
+  logoUrl?: string;
 }

@@ -47,6 +47,10 @@ model Business {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  description String?  @db.Text
+  logoUrl     String?
+
+
   staff          Staff[]
   services       Service[]
   bookings       Booking[]
