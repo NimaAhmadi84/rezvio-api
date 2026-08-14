@@ -63,3 +63,7 @@ test-auth.sh
 .claude/
 .windsurf/
 scripts/
+
+# Test scripts
+test-refresh.sh
+test-auth.sh
