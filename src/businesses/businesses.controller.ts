@@ -26,14 +26,27 @@ import { UserRole } from '@prisma/client';
 export class BusinessesController {
   constructor(private readonly businessesService: BusinessesService) {}
 
+  /**
+   * ساخت کسب‌وکار جدید
+   *
+   * منطق ارتقا خودکار:
+   * - اگه کاربر CUSTOMER باشه → به OWNER ارتقا می‌یابه
+   * - اگه کاربر OWNER باشه → همون OWNER می‌مونه
+   * - اگه کاربر ADMIN باشه → همون ADMIN می‌مونه
+   *
+   * همه این ارتقاها + ساخت business در یک transaction انجام می‌شه
+   */
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @Roles(UserRole.CUSTOMER, UserRole.OWNER, UserRole.ADMIN)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'ساخت کسب‌وکار جدید (فقط OWNER و ADMIN)' })
+  @ApiOperation({
+    summary: 'ساخت کسب‌وکار جدید + ارتقا خودکار CUSTOMER به OWNER',
+    description: 'هر کاربر authenticated می‌تونه کسب‌وکار بسازه. اگه CUSTOMER باشه، به OWNER ارتقا می‌یابه.',
+  })
   @ApiResponse({ status: 201, description: 'کسب‌وکار با موفقیت ساخته شد' })
   create(@CurrentUser() user: AuthUserDto, @Body() dto: CreateBusinessDto) {
-    return this.businessesService.create(user.id, dto);
+    return this.businessesService.createWithRoleUpgrade(user.id, user.role, dto);
   }
 
   @Get()
