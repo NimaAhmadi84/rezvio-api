@@ -10,6 +10,7 @@ import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
+import { SearchBusinessesDto } from './dto/search-businesses.dto';
 
 @Injectable()
 export class BusinessesService {
@@ -176,6 +177,7 @@ export class BusinessesService {
             address: dto.address,
             phone: dto.phone,
             ownerId: userId,
+            categoryId: dto.categoryId,
           },
         });
       });
@@ -190,6 +192,7 @@ export class BusinessesService {
         address: dto.address,
         phone: dto.phone,
         ownerId: userId,
+        categoryId: dto.categoryId,
       },
     });
     this.logger.log(`✅ کسب‌وکار "${dto.name}" با slug "${slug}" ساخته شد (کاربر از قبل ${currentRole} بود)`);
@@ -232,12 +235,24 @@ export class BusinessesService {
     const business = await this.prisma.business.findUnique({
       where: { slug },
       include: {
-        services: {},
+        category: true,
+        services: true,
         staff: true,
         businessHours: { orderBy: { dayOfWeek: 'asc' } },
+        _count: { select: { bookings: true } },
       },
     });
     if (!business) throw new NotFoundException('کسب‌وکار یافت نشد');
+
+    // افزایش viewsCount (آمار بازدید صفحه عمومی)
+    await this.prisma.business.update({
+      where: { id: business.id },
+      data: { viewsCount: { increment: 1 } },
+    });
+
+    // مقدار viewsCount را دستی افزایش می‌دهیم تا در response درست باشد
+    business.viewsCount = (business.viewsCount ?? 0) + 1;
+
     return business;
   }
 
@@ -260,6 +275,85 @@ export class BusinessesService {
     await this.checkOwnership(id, userId);
     await this.prisma.business.delete({ where: { id } });
     return { message: 'کسب‌وکار با موفقیت حذف شد' };
+  }
+
+
+  /**
+   * جستجو و فیلتر کسب‌وکارها با pagination
+   * - q: جستجو در نام
+   * - city: فیلتر بر اساس شهر (بخشی از آدرس)
+   * - categoryId: فیلتر بر اساس دسته‌بندی
+   * - sort: newest, popular, most-viewed, name-asc, name-desc
+   * - page, limit: pagination
+   */
+  async search(dto: SearchBusinessesDto) {
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 12;
+    const skip = (page - 1) * limit;
+
+    // ساخت where clause
+    const where: any = {};
+
+    if (dto.q) {
+      where.name = { contains: dto.q, mode: 'insensitive' };
+    }
+
+    if (dto.city) {
+      where.address = { contains: dto.city, mode: 'insensitive' };
+    }
+
+    if (dto.categoryId) {
+      where.categoryId = dto.categoryId;
+    }
+
+    // مرتب‌سازی
+    let orderBy: any = { createdAt: 'desc' };
+    switch (dto.sort) {
+      case 'newest':
+        orderBy = { createdAt: 'desc' };
+        break;
+      case 'popular':
+        orderBy = { bookingsCount: 'desc' };
+        break;
+      case 'most-viewed':
+        orderBy = { viewsCount: 'desc' };
+        break;
+      case 'name-asc':
+        orderBy = { name: 'asc' };
+        break;
+      case 'name-desc':
+        orderBy = { name: 'desc' };
+        break;
+    }
+
+    // اجرای query
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.business.findMany({
+        where,
+        orderBy,
+        skip,
+        take: limit,
+        include: {
+          category: true,
+          _count: { select: { services: true, staff: true, bookings: true } },
+        },
+      }),
+      this.prisma.business.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      items,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    };
   }
 
   async findByOwner(ownerId: string) {
