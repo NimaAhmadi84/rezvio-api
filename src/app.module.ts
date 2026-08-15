@@ -14,6 +14,8 @@ import { SlotsModule } from './slots/slots.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { EmailModule } from './email/email.module';
 import { SmsModule } from './sms/sms.module';
+import { CategoriesModule } from './categories/categories.module';
+import { StatsModule } from './stats/stats.module';
 import { OtpModule } from './otp/otp.module';
 
 @Module({
@@ -34,6 +36,8 @@ import { OtpModule } from './otp/otp.module';
     EmailModule,
     SmsModule,
     OtpModule,
+    CategoriesModule,
+    StatsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -36,6 +36,21 @@ model User {
   @@map("users")
 }
 
+
+model Category {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  slug      String     @unique
+  icon      String?
+  sortOrder Int        @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  businesses Business[]
+
+  @@map("categories")
+}
+
 model Business {
   id        String   @id @default(uuid())
   name      String
@@ -51,11 +66,22 @@ model Business {
   logoUrl     String?
 
 
-  staff          Staff[]
+  // ──── Foundation (Phase 15) ────
+  categoryId   String?
+  category     Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  viewsCount   Int       @default(0)
+  bookingsCount Int      @default(0)
+
+    staff          Staff[]
   services       Service[]
   bookings       Booking[]
   businessHours  BusinessHour[]
   holidays       Holiday[]
+
+  @@index([categoryId])
+  @@index([viewsCount])
+  @@index([bookingsCount])
+  @@index([createdAt])
 
   @@map("businesses")
 }

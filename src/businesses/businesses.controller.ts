@@ -15,6 +15,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { BusinessesService } from './businesses.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
+import { SearchBusinessesDto } from './dto/search-businesses.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -67,6 +68,21 @@ export class BusinessesController {
     }
     // slug رو بدون lowercase بفرست - service خودش lowercase و validate می‌کنه
     return this.businessesService.checkSlugAvailability(slug.trim());
+  }
+
+
+  /**
+   * جستجو و فیلتر کسب‌وکارها (عمومی)
+   * با pagination و sorting
+   */
+  @Get('search')
+  @ApiOperation({
+    summary: 'جستجو و فیلتر کسب‌وکارها',
+    description: 'جستجو در کسب‌وکارها با فیلتر (شهر، دسته‌بندی، نام) و pagination و sorting',
+  })
+  @ApiResponse({ status: 200, description: 'لیست کسب‌وکارها با pagination' })
+  search(@Query() dto: SearchBusinessesDto) {
+    return this.businessesService.search(dto);
   }
 
   @Get()

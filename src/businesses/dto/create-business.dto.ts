@@ -1,4 +1,4 @@
-import { IsString, MinLength, MaxLength, IsOptional, Matches, IsUrl } from 'class-validator';
+import { IsString, MinLength, MaxLength, IsOptional, Matches, IsUrl, IsUUID } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateBusinessDto {
@@ -50,4 +50,13 @@ export class CreateBusinessDto {
   @IsOptional()
   @MaxLength(500, { message: 'URL لوگو نباید بیش از ۵۰۰ کاراکتر باشد' })
   logoUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'ID دسته‌بندی کسب‌وکار',
+    example: 'uuid-of-category',
+  })
+  @IsUUID('4', { message: 'ID دسته‌بندی نامعتبر است' })
+  @IsOptional()
+  categoryId?: string;
+
 }

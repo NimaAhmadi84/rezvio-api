@@ -6,8 +6,51 @@ import 'dotenv/config';
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const prisma = new PrismaClient({ adapter });
 
+// ═══════════════════════════════════════════════════════════════
+// 📂 دسته‌بندی‌های پیش‌فرض کسب‌وکارها (Phase 15 Foundation)
+// ═══════════════════════════════════════════════════════════════
+const defaultCategories = [
+  { name: 'آرایشگاه مردانه', slug: 'barber', icon: '✂️', sortOrder: 1 },
+  { name: 'آرایشگاه زنانه', slug: 'beauty-salon', icon: '💇‍♀️', sortOrder: 2 },
+  { name: 'کلینیک پزشکی', slug: 'clinic', icon: '🏥', sortOrder: 3 },
+  { name: 'دندانپزشکی', slug: 'dental', icon: '🦷', sortOrder: 4 },
+  { name: 'ماساژ و اسپا', slug: 'spa', icon: '💆', sortOrder: 5 },
+  { name: 'ورزش و تناسب اندام', slug: 'fitness', icon: '🏋️', sortOrder: 6 },
+  { name: 'آموزشگاه', slug: 'education', icon: '📚', sortOrder: 7 },
+  { name: 'تعمیرات', slug: 'repair', icon: '🔧', sortOrder: 8 },
+  { name: 'مشاوره', slug: 'consulting', icon: '💼', sortOrder: 9 },
+  { name: 'عکاسی', slug: 'photography', icon: '📷', sortOrder: 10 },
+  { name: 'حقوقی', slug: 'legal', icon: '⚖️', sortOrder: 11 },
+  { name: 'سایر', slug: 'other', icon: '📌', sortOrder: 99 },
+];
+
 async function main() {
   console.log('🌱 شروع فرآیند Seed کردن دیتابیس Rezvio...');
+  console.log('');
+
+  // ═══════════════════════════════════════════════════════════════
+  // 📂 Seed دسته‌بندی‌ها (Phase 15)
+  // ═══════════════════════════════════════════════════════════════
+  console.log('📂 ساخت دسته‌بندی‌های پیش‌فرض:');
+  let categoriesCreated = 0;
+  let categoriesExisted = 0;
+
+  for (const cat of defaultCategories) {
+    const result = await prisma.category.upsert({
+      where: { slug: cat.slug },
+      update: { name: cat.name, icon: cat.icon, sortOrder: cat.sortOrder },
+      create: cat,
+    });
+    // اگه createdAt و updatedAt یکی باشن یعنی تازه ساخته شده
+    if (Math.abs(result.createdAt.getTime() - result.updatedAt.getTime()) < 1000) {
+      console.log(`   ✅ ${cat.icon} ${cat.name} (${cat.slug})`);
+      categoriesCreated++;
+    } else {
+      categoriesExisted++;
+    }
+  }
+  console.log('');
+  console.log(`📊 ${categoriesCreated} دسته جدید، ${categoriesExisted} از قبل وجود داشت`);
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════
@@ -54,11 +97,14 @@ async function main() {
   console.log('📌 کاربران ایجاد شده:');
   console.log(`   • ادمین کل: ${adminEmail}`);
   console.log('');
+  console.log('📂 دسته‌بندی‌های پیش‌فرض:');
+  console.log(`   • ${defaultCategories.length} دسته آماده استفاده`);
+  console.log('');
   console.log('💡 نکته: بقیه کاربران (CUSTOMER و OWNER) از طریق فرم');
   console.log('   ثبت‌نام عمومی در /auth ساخته می‌شن.');
   console.log('');
-  console.log('🏢 برای ارتقا CUSTOMER به OWNER، در داشبورد باید');
-  console.log('   دکمه "ایجاد کسب‌وکار" پیاده‌سازی بشه (فاز بعدی).');
+  console.log('🏢 برای ارتقا CUSTOMER به OWNER، از داشبورد');
+  console.log('   دکمه "ایجاد کسب‌وکار" استفاده کنید.');
   console.log('');
 }
 
