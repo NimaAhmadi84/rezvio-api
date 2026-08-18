@@ -306,6 +306,10 @@ export class BusinessesService {
       where.categoryId = dto.categoryId;
     }
 
+    if (dto.since) {
+      where.createdAt = { gte: new Date(dto.since) };
+    }
+
     // مرتب‌سازی
     let orderBy: any = { createdAt: 'desc' };
     switch (dto.sort) {

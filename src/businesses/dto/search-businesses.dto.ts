@@ -40,6 +40,14 @@ export class SearchBusinessesDto {
   sort?: string;
 
   @ApiPropertyOptional({
+    description: 'فیلتر کسب‌وکارهای ساخته‌شده بعد از این تاریخ (ISO 8601) - برای تب جدیدترین',
+    example: '2026-02-18T00:00:00.000Z',
+  })
+  @IsDateString({}, { message: 'since باید یک تاریخ معتبر ISO 8601 باشد' })
+  @IsOptional()
+  since?: string;
+
+  @ApiPropertyOptional({
     description: 'شماره صفحه (از 1 شروع می‌شود)',
     default: 1,
     minimum: 1,
