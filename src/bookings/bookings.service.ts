@@ -1,10 +1,8 @@
-import {
-  Injectable,
+import { Injectable,
   NotFoundException,
   ForbiddenException,
   ConflictException,
-  BadRequestException,
-} from '@nestjs/common';
+  BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
@@ -26,6 +24,7 @@ const STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
 
 @Injectable()
 export class BookingsService {
+  private readonly logger = new Logger(BookingsService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly businessesService: BusinessesService,
@@ -376,9 +375,42 @@ export class BookingsService {
       );
     }
 
-    return this.prisma.booking.update({
-      where: { id },
-      data: { status: dto.status },
+    // 🎯 محاسبه تغییر bookingsCount برای کسب‌وکار
+    // PENDING → CONFIRMED: +1 (رزرو تأیید شد)
+    // CONFIRMED → CANCELLED: -1 (رزرو لغو شد، rollback)
+    let bookingsCountDelta = 0;
+    const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
+    const willBeConfirmed = dto.status === BookingStatus.CONFIRMED;
+    const willBeCancelled = dto.status === BookingStatus.CANCELLED;
+
+    if (!wasConfirmed && willBeConfirmed) {
+      bookingsCountDelta = 1;
+      this.logger.log(`📈 Incrementing bookingsCount for business ${booking.businessId} (PENDING → CONFIRMED)`);
+    } else if (wasConfirmed && willBeCancelled) {
+      bookingsCountDelta = -1;
+      this.logger.log(`📉 Decrementing bookingsCount for business ${booking.businessId} (CONFIRMED → CANCELLED)`);
+    }
+
+    // 🔄 اجرای atomic transaction: update booking + update business.bookingsCount
+    return this.prisma.$transaction(async (tx) => {
+      const updatedBooking = await tx.booking.update({
+        where: { id },
+        data: { status: dto.status },
+      });
+
+      // فقط اگر delta غیر صفر باشد، business را update می‌کنیم
+      if (bookingsCountDelta !== 0) {
+        await tx.business.update({
+          where: { id: booking.businessId },
+          data: {
+            bookingsCount: {
+              increment: bookingsCountDelta,
+            },
+          },
+        });
+      }
+
+      return updatedBooking;
     });
   }
 
@@ -427,9 +459,34 @@ export class BookingsService {
       throw new ForbiddenException('دسترسی غیرمجاز');
     }
 
-    return this.prisma.booking.update({
-      where: { id },
-      data: { status: BookingStatus.CANCELLED },
+    // 🎯 اگر رزرو قبلاً CONFIRMED بوده، باید bookingsCount را کاهش دهیم
+    const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
+    const bookingsCountDelta = wasConfirmed ? -1 : 0;
+
+    if (wasConfirmed) {
+      this.logger.log(`📉 Decrementing bookingsCount for business ${booking.businessId} (CANCEL of CONFIRMED booking)`);
+    }
+
+    // 🔄 اجرای atomic transaction
+    return this.prisma.$transaction(async (tx) => {
+      const cancelledBooking = await tx.booking.update({
+        where: { id },
+        data: { status: BookingStatus.CANCELLED },
+      });
+
+      // فقط اگر رزرو قبلاً CONFIRMED بوده، business را update می‌کنیم
+      if (bookingsCountDelta !== 0) {
+        await tx.business.update({
+          where: { id: booking.businessId },
+          data: {
+            bookingsCount: {
+              increment: bookingsCountDelta,
+            },
+          },
+        });
+      }
+
+      return cancelledBooking;
     });
   }
 

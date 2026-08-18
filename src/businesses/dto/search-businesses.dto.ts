@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsInt, Min, Max, IsUUID, Matches } from 'class-validator';
+import { IsOptional, IsString, IsInt, Min, Max, IsUUID, Matches, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -38,6 +38,14 @@ export class SearchBusinessesDto {
     message: 'sort باید یکی از: newest, popular, most-viewed, name-asc, name-desc باشد',
   })
   sort?: string;
+
+  @ApiPropertyOptional({
+    description: 'فیلتر کسب‌وکارهای ساخته‌شده بعد از این تاریخ (ISO 8601) - برای تب جدیدترین',
+    example: '2026-02-18T00:00:00.000Z',
+  })
+  @IsDateString({}, { message: 'since باید یک تاریخ معتبر ISO 8601 باشد' })
+  @IsOptional()
+  since?: string;
 
   @ApiPropertyOptional({
     description: 'شماره صفحه (از 1 شروع می‌شود)',
