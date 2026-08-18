@@ -19,6 +19,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       statement_timeout: 30000,       // 30 ثانیه timeout برای هر query
       query_timeout: 30000,           // 30 ثانیه timeout برای هر query
       application_name: 'rezvio-api', // برای تشخیص در Supabase Dashboard
+      keepAlive: true,                // 🛡️ جلوگیری از قطع شدن اتصال توسط Supabase (Idle timeout)
+      keepAliveInitialDelayMillis: 10000, // ارسال اولین Keep-Alive بعد از 10 ثانیه
     });
 
     super({
