@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { CacheModule } from '@nestjs/cache-manager';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -20,6 +22,20 @@ import { OtpModule } from './otp/otp.module';
 
 @Module({
   imports: [
+    CacheModule.register({
+      isGlobal: true, // 🌍 Global cache - accessible from all modules
+      ttl: 30000, // 30 seconds default TTL
+      max: 500, // Maximum 500 items in cache
+    }),
+    ThrottlerModule.forRoot({
+      throttlers: [
+        {
+          name: 'default',
+          ttl: 60000, // 1 minute
+          limit: 100, // 100 requests per minute per IP
+        },
+      ],
+    }),
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
@@ -40,6 +56,10 @@ import { OtpModule } from './otp/otp.module';
     StatsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },AppService],
 })
 export class AppModule {}

@@ -1,11 +1,11 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-
 import { StatsService } from './stats.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -22,6 +22,8 @@ export class StatsController {
    * بدون نیاز به auth - قابل cache شدن
    */
   @Get('landing')
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(300000) // 5 minutes cache for landing stats
   @ApiOperation({
     summary: 'آمار عمومی landing page',
     description:
