@@ -326,20 +326,28 @@ export class BusinessesService {
         break;
     }
 
-    // اجرای query
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.business.findMany({
-        where,
-        orderBy,
-        skip,
-        take: limit,
-        include: {
-          category: true,
-          _count: { select: { services: true, staff: true, bookings: true } },
-        },
-      }),
-      this.prisma.business.count({ where }),
-    ]);
+    // 🎯 Interactive Transaction — پایدارتر از Batch Transaction برای Supabase
+    // جلوگیری از خطای P2028 تحت ترافیک بالا با timeoutهای محافظ
+    const [items, total] = await this.prisma.$transaction(
+      async (tx) => {
+        const itemsResult = await tx.business.findMany({
+          where,
+          orderBy,
+          skip,
+          take: limit,
+          include: {
+            category: true,
+            _count: { select: { services: true, staff: true, bookings: true } },
+          },
+        });
+        const totalResult = await tx.business.count({ where });
+        return [itemsResult, totalResult];
+      },
+      {
+        maxWait: 5000,   // حداکثر 5 ثانیه صبر برای شروع transaction
+        timeout: 15000,  // حداکثر 15 ثانیه برای کل عملیات
+      },
+    );
 
     const totalPages = Math.ceil(total / limit);
 
