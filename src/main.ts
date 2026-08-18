@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import helmet from 'helmet';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
@@ -6,10 +7,16 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // 🔒 Security headers
+  app.use(helmet());
+
   // CORS - اجازه دسترسی فرانت‌اند به API
   app.enableCors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type, Authorization, X-Requested-With',
     credentials: true,
+    maxAge: 86400, // 24 hours preflight cache
   });
 
   // Global ValidationPipe - اعتبارسنجی خودکار همه DTOها

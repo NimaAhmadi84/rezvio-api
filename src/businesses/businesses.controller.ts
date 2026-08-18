@@ -1,17 +1,6 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  UseGuards,
-  ParseUUIDPipe,
-  Query,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
-
 import { BusinessesService } from './businesses.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
@@ -76,6 +65,8 @@ export class BusinessesController {
    * با pagination و sorting
    */
   @Get('search')
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(30000) // 30 seconds cache for search results
   @ApiOperation({
     summary: 'جستجو و فیلتر کسب‌وکارها',
     description: 'جستجو در کسب‌وکارها با فیلتر (شهر، دسته‌بندی، نام) و pagination و sorting',

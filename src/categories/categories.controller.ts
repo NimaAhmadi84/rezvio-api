@@ -1,21 +1,11 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  UseGuards,
-  ParseUUIDPipe,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -51,6 +41,8 @@ export class CategoriesController {
    * مرتب‌سازی بر اساس sortOrder
    */
   @Get()
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(600000) // 10 minutes cache for categories
   @ApiOperation({
     summary: 'دریافت همه دسته‌بندی‌ها',
     description: 'لیست همه دسته‌بندی‌ها به ترتیب sortOrder (عمومی)',
