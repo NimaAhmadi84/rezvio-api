@@ -26,7 +26,8 @@ model User {
   phone     String?  @unique
   password  String?
   name      String?
-  role      UserRole @default(CUSTOMER)
+  role       UserRole @default(CUSTOMER)
+  nationalId String?  @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -64,6 +65,16 @@ model Business {
 
   description String?  @db.Text
   logoUrl     String?
+
+  // ──── Location (Phase 18) ────
+  province    String?
+  city        String?
+  latitude    Float?
+  longitude   Float?
+  mapLink     String?  @db.Text
+
+  // ──── Social Media (Phase 18) ────
+  socialMedia Json?
 
 
   // ──── Foundation (Phase 15) ────

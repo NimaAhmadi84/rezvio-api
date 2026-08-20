@@ -8,6 +8,7 @@ import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { ProvincesModule } from './provinces/provinces.module';
 import { BusinessesModule } from './businesses/businesses.module';
 import { ServicesModule } from './services/services.module';
 import { StaffModule } from './staff/staff.module';
@@ -19,9 +20,12 @@ import { SmsModule } from './sms/sms.module';
 import { CategoriesModule } from './categories/categories.module';
 import { StatsModule } from './stats/stats.module';
 import { OtpModule } from './otp/otp.module';
+import { UploadModule } from './upload/upload.module';
 
 @Module({
   imports: [
+    ProvincesModule,
+    UploadModule,
     CacheModule.register({
       isGlobal: true, // 🌍 Global cache - accessible from all modules
       ttl: 30000, // 30 seconds default TTL
