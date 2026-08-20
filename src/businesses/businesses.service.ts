@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  ForbiddenException,
-  ConflictException,
-  Logger,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { nanoid } from 'nanoid';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -199,11 +193,123 @@ export class BusinessesService {
     return { ...business, roleUpgraded: false, newRole: currentRole };
   }
 
-  async create(userId: string, dto: CreateBusinessDto) {
-    const slug = await this.resolveSlug(dto);
-    return this.prisma.business.create({
-      data: { name: dto.name, slug, address: dto.address, phone: dto.phone, ownerId: userId },
+    async create(dto: CreateBusinessDto, ownerId: string, userRole: UserRole) {
+    // ──── بررسی nationalId و ذخیره در User در صورت نیاز ────
+    if (dto.nationalId) {
+      const user = await this.prisma.user.findUnique({ where: { id: ownerId } });
+      if (!user) {
+        throw new NotFoundException('کاربر یافت نشد');
+      }
+
+      // اگر nationalId کاربر از قبل ست شده، با nationalId ارسالی مقایسه کنیم
+      if (user.nationalId && user.nationalId !== dto.nationalId) {
+        throw new BadRequestException(
+          'کد ملی شما قبلاً در پروفایل ثبت شده است. از همان کد ملی استفاده کنید.',
+        );
+      }
+
+      // اعتبارسنجی الگوریتم رسمی کد ملی ایران (checksum)
+      if (!this.validateIranianNationalId(dto.nationalId)) {
+        throw new BadRequestException('کد ملی نامعتبر است');
+      }
+
+      // اگر nationalId کاربر null بود، آپدیت کنیم
+      if (!user.nationalId) {
+        await this.prisma.user.update({
+          where: { id: ownerId },
+          data: { nationalId: dto.nationalId },
+        });
+        this.logger.log(`🆔 nationalId set for user ${ownerId} on business creation`);
+      }
+    }
+
+    // ──── تولید slug ────
+    let slug: string;
+    if (dto.customSlug) {
+      const existing = await this.prisma.business.findUnique({
+        where: { slug: dto.customSlug },
+      });
+      if (existing) {
+        throw new ConflictException('این آدرس اختصاصی قبلاً استفاده شده است');
+      }
+      slug = dto.customSlug;
+    } else {
+      slug = await this.ensureUniqueSlug(dto.name);
+    }
+
+    // ──── ارتقا نقش به OWNER (فقط در اولین کسب‌وکار) ────
+    let roleUpgraded = false;
+    let newRole = userRole;
+    if (userRole === 'CUSTOMER') {
+      const existingBusinesses = await this.prisma.business.count({
+        where: { ownerId },
+      });
+      if (existingBusinesses === 0) {
+        await this.prisma.user.update({
+          where: { id: ownerId },
+          data: { role: 'OWNER' },
+        });
+        roleUpgraded = true;
+        newRole = 'OWNER';
+      }
+    }
+
+    // ──── ایجاد کسب‌وکار با همه فیلدهای جدید ────
+    const business = await this.prisma.business.create({
+      data: {
+        name: dto.name,
+        slug,
+        address: dto.address,
+        phone: dto.phone,
+        description: dto.description,
+        logoUrl: dto.logoUrl,
+        categoryId: dto.categoryId,
+        province: dto.province,
+        city: dto.city,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        mapLink: dto.mapLink,
+        socialMedia: dto.socialMedia ? (JSON.parse(JSON.stringify(dto.socialMedia))) : undefined,
+        ownerId,
+      },
+      include: {
+        category: true,
+      },
     });
+
+    this.logger.log(`✅ Business created: ${business.name} (slug: ${business.slug})`);
+
+    return {
+      ...business,
+      roleUpgraded,
+      newRole,
+    };
+  }
+
+  /**
+   * اعتبارسنجی الگوریتم رسمی کد ملی ایران (۱۰ رقم + checksum)
+   */
+  private validateIranianNationalId(nationalId: string): boolean {
+    if (!/^\d{10}$/.test(nationalId)) return false;
+
+    // رد کدهای نامعتبر (همه رقم‌ها یکسان)
+    if (/^(\d)\1{9}$/.test(nationalId)) return false;
+
+    const digits = nationalId.split('').map(Number);
+    const check = digits[9];
+    let sum = 0;
+
+    for (let i = 0; i < 9; i++) {
+      sum += digits[i] * (10 - i);
+    }
+
+    const remainder = sum % 11;
+
+    if (remainder < 2) {
+      return check === remainder;
+    } else {
+      return check === 11 - remainder;
+    }
   }
 
   async findAll() {
@@ -267,8 +373,47 @@ export class BusinessesService {
   }
 
   async update(id: string, userId: string, dto: UpdateBusinessDto) {
-    await this.checkOwnership(id, userId);
-    return this.prisma.business.update({ where: { id }, data: dto });
+    // بررسی مالکیت
+    const business = await this.prisma.business.findUnique({
+      where: { id },
+      select: { ownerId: true },
+    });
+
+    if (!business) {
+      throw new NotFoundException('کسب‌وکار یافت نشد');
+    }
+
+    if (business.ownerId !== userId) {
+      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
+    }
+
+    // ساخت data object با فیلدهای مشخص (جلوگیری از type mismatch با Prisma)
+    const data: any = {};
+
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.address !== undefined) data.address = dto.address;
+    if (dto.phone !== undefined) data.phone = dto.phone;
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.logoUrl !== undefined) data.logoUrl = dto.logoUrl;
+    if (dto.categoryId !== undefined) data.categoryId = dto.categoryId;
+    if (dto.province !== undefined) data.province = dto.province;
+    if (dto.city !== undefined) data.city = dto.city;
+    if (dto.latitude !== undefined) data.latitude = dto.latitude;
+    if (dto.longitude !== undefined) data.longitude = dto.longitude;
+    if (dto.mapLink !== undefined) data.mapLink = dto.mapLink;
+    if (dto.socialMedia !== undefined) {
+      data.socialMedia = JSON.parse(JSON.stringify(dto.socialMedia));
+    }
+
+    const updated = await this.prisma.business.update({
+      where: { id },
+      data,
+      include: { category: true },
+    });
+
+    this.logger.log(`✅ Business updated: ${updated.name} (id: ${id})`);
+
+    return updated;
   }
 
   async remove(id: string, userId: string) {
