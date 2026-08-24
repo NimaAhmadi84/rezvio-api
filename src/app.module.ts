@@ -21,22 +21,24 @@ import { CategoriesModule } from './categories/categories.module';
 import { StatsModule } from './stats/stats.module';
 import { OtpModule } from './otp/otp.module';
 import { UploadModule } from './upload/upload.module';
+import { BusinessImagesModule } from './business-images/business-images.module';
 
 @Module({
   imports: [
     ProvincesModule,
     UploadModule,
+    BusinessImagesModule,
     CacheModule.register({
-      isGlobal: true, // 🌍 Global cache - accessible from all modules
-      ttl: 30000, // 30 seconds default TTL
-      max: 500, // Maximum 500 items in cache
+      isGlobal: true,
+      ttl: 30000,
+      max: 500,
     }),
     ThrottlerModule.forRoot({
       throttlers: [
         {
           name: 'default',
-          ttl: 60000, // 1 minute
-          limit: 100, // 100 requests per minute per IP
+          ttl: 60000,
+          limit: 100,
         },
       ],
     }),
@@ -64,6 +66,8 @@ import { UploadModule } from './upload/upload.module';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
-    },AppService],
+    },
+    AppService,
+  ],
 })
 export class AppModule {}

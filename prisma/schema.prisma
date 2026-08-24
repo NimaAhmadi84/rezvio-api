@@ -76,6 +76,8 @@ model Business {
   // ──── Social Media (Phase 18) ────
   socialMedia Json?
 
+  // ──── Gallery Images ────
+  images      BusinessImage[]
 
   // ──── Foundation (Phase 15) ────
   categoryId   String?
@@ -83,7 +85,7 @@ model Business {
   viewsCount   Int       @default(0)
   bookingsCount Int      @default(0)
 
-    staff          Staff[]
+  staff          Staff[]
   services       Service[]
   bookings       Booking[]
   businessHours  BusinessHour[]
@@ -95,6 +97,20 @@ model Business {
   @@index([createdAt])
 
   @@map("businesses")
+}
+
+model BusinessImage {
+  id          String   @id @default(uuid())
+  url         String
+  caption     String?
+  sortOrder   Int      @default(0)
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([businessId, sortOrder])
+  @@map("business_images")
 }
 
 model Staff {
