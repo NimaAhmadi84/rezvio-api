@@ -321,7 +321,7 @@ export class BusinessesService {
     });
   }
 
-  async findOne(id: string) {
+    async findOne(id: string) {
     const business = await this.prisma.business.findUnique({
       where: { id },
       include: {
@@ -330,6 +330,7 @@ export class BusinessesService {
         staff: true,
         businessHours: true,
         holidays: true,
+        images: { orderBy: { sortOrder: 'asc' } },
         _count: { select: { bookings: true } },
       },
     });
@@ -337,7 +338,7 @@ export class BusinessesService {
     return business;
   }
 
-  async findBySlug(slug: string) {
+    async findBySlug(slug: string) {
     const business = await this.prisma.business.findUnique({
       where: { slug },
       include: {
@@ -345,6 +346,7 @@ export class BusinessesService {
         services: true,
         staff: true,
         businessHours: { orderBy: { dayOfWeek: 'asc' } },
+        images: { orderBy: { sortOrder: 'asc' } },
         _count: { select: { bookings: true } },
       },
     });
@@ -513,10 +515,13 @@ export class BusinessesService {
     };
   }
 
-  async findByOwner(ownerId: string) {
+    async findByOwner(ownerId: string) {
     return this.prisma.business.findMany({
       where: { ownerId },
-      include: { _count: { select: { services: true, staff: true, bookings: true } } },
+      include: {
+        images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+        _count: { select: { services: true, staff: true, bookings: true } },
+      },
     });
   }
 }
