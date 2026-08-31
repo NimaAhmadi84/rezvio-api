@@ -10,25 +10,30 @@ async function bootstrap() {
   // 🔒 Security headers
   app.use(helmet());
 
-  // CORS - اجازه دسترسی فرانت‌اند به API
+  // CORS — origins اضافی (مثل IP شبکه برای تست موبایل) از env خوانده می‌شن
+  const extraOrigins = (process.env.CORS_EXTRA_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: 'Content-Type, Authorization, X-Requested-With',
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000', ...extraOrigins],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     credentials: true,
-    maxAge: 86400, // 24 hours preflight cache
+    maxAge: 86400,
   });
 
-  // Global ValidationPipe - اعتبارسنجی خودکار همه DTOها
+  // Global ValidationPipe
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // فیلدهای اضافی رو حذف می‌کنه
-      forbidNonWhitelisted: true, // اگه فیلد اضافی بود، ارور می‌ده
-      transform: true, // تبدیل خودکار تایپ‌ها
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
     }),
   );
 
-  // Swagger - مستندسازی خودکار API
+  // Swagger
   const config = new DocumentBuilder()
     .setTitle('Rezvio API')
     .setDescription('Multi-tenant booking SaaS API')
@@ -39,8 +44,12 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 3001;
-  await app.listen(port);
+
+  // Listen روی همه اینترفیس‌ها (نه فقط localhost)
+  await app.listen(port, '0.0.0.0');
+
   console.log(`🚀 Rezvio API running on http://localhost:${port}`);
+  console.log(`🚀 API also available on network: http://10.249.135.225:${port}`);
   console.log(`📚 Swagger docs: http://localhost:${port}/api/docs`);
 }
 bootstrap();
