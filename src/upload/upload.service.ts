@@ -8,6 +8,17 @@ import {
 } from './validators/image-validator';
 import { processBusinessLogo } from './processors/image-processor';
 
+/**
+ * Multer file interface — inline definition to avoid @types/multer dependency
+ * Matches Express.Multer.File structure used by NestJS FileInterceptor
+ */
+export interface MulterFile {
+  buffer: Buffer;
+  originalname?: string;
+  mimetype?: string;
+  size?: number;
+}
+
 export interface UploadResult {
   url: string;
   path: string;
@@ -19,12 +30,14 @@ export interface UploadResult {
   originalSize: number;
 }
 
+
+
 @Injectable()
 export class UploadService {
   private readonly logger = new Logger(UploadService.name);
   private supabase: SupabaseClient;
   private readonly bucket: string;
-  private readonly maxSize: number = 5 * 1024 * 1024; // 5MB
+  private readonly maxSize: number = 10 * 1024 * 1024; // 10MB
 
   constructor(private readonly configService: ConfigService) {
     const url = this.configService.get<string>('SUPABASE_URL');
@@ -47,7 +60,7 @@ export class UploadService {
    * - Auto-rotate + WebP conversion + smart resize
    */
   async uploadBusinessLogo(
-    file: Express.Multer.File,
+    file: MulterFile,
     userId: string,
   ): Promise<UploadResult> {
     // Step 1: Validate file exists
@@ -84,7 +97,8 @@ export class UploadService {
     try {
       processed = await processBusinessLogo(file.buffer);
     } catch (error) {
-      this.logger.error(`❌ Image processing failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`❌ Image processing failed: ${errorMessage}`);
       throw new BadRequestException('خطا در پردازش تصویر. لطفاً فایل معتبر ارسال کنید.');
     }
 

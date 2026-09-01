@@ -20,6 +20,22 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UploadService } from './upload.service';
 
+/**
+ * Multer file interface — inline definition to avoid @types/multer dependency
+ * Matches Express.Multer.File structure used by NestJS FileInterceptor
+ */
+interface MulterFile {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+  size: number;
+  fieldname: string;
+  encoding: string;
+  destination?: string;
+  filename?: string;
+  path?: string;
+}
+
 @ApiTags('Upload')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -33,7 +49,7 @@ export class UploadController {
     FileInterceptor('file', {
       storage: undefined,
       limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB
+        fileSize: 10 * 1024 * 1024, // 10MB
         files: 1,
       },
       fileFilter: (req, file, cb) => {
@@ -54,7 +70,7 @@ export class UploadController {
       - تبدیل به WebP با quality 85
       - Smart resize (max 2048px)
       - حداقل ابعاد: 200×200 پیکسل
-      - حداکثر حجم: 5MB
+      - حداکثر حجم: 10MB
     `,
   })
   @ApiConsumes('multipart/form-data')
@@ -95,7 +111,7 @@ export class UploadController {
   @ApiResponse({ status: 401, description: 'نیاز به احراز هویت' })
   @ApiResponse({ status: 500, description: 'خطای سرور' })
   async uploadBusinessLogo(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: MulterFile,
     @Request() req: any,
   ) {
     if (!file) {
