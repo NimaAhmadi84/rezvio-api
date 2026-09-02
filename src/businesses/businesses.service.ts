@@ -15,59 +15,17 @@ export class BusinessesService {
   /**
    * تبدیل نام به slug (URL-friendly)
    *
-   * منطق ساده و قابل اعتماد:
-   * 1. اگه نام شامل حروف فارسی/عربی باشه و لاتین کمتر از ۱۰ کاراکتر باشه → nanoid
-   * 2. اگه هیچ لاتین نباشه → nanoid
-   * 3. وگرنه slug بساز از لاتین‌ها
-   *
-   * مثال:
-   * - "Ali Barber" → no Persian, 10 latin → "ali-barber" ✅
-   * - "آرایشگاه علی" → Persian, 0 latin < 10 → nanoid ✅
-   * - "آرایشگاه بدون slug" → Persian, 4 latin < 10 → nanoid ✅
-   * - "Nima-Barber-2026" → no Persian, 14 latin → "nima-barber-2026" ✅
-   * - "My Barber آرایشگاه" → Persian, 8 latin < 10 → nanoid ✅
-   * - "Tehran Beauty Salon" → no Persian, 19 latin → "tehran-beauty-salon" ✅
-   * - "Best Barber آرایشگاه مدرن" → Persian, 10 latin >= 10 → "best-barber" ✅ (edge case)
-   */
-  /**
-   * تبدیل نام به slug (URL-friendly)
-   *
-   * منطق: اگه نام شامل حروف غیرلاتین (فارسی/عربی/چینی/هندی) باشه → nanoid
-   * وگرنه slug از حروف لاتین ساخته می‌شه
-   */
-  /**
-   * تبدیل نام به slug (URL-friendly)
-   * 
-   * منطق: اگه نام شامل هر کاراکتر غیر-ASCII باشه (فارسی/عربی/چینی/...) → nanoid
-   * وگرنه slug از حروف لاتین
-   * 
-   * چرا این روش:
-   * - regex [^\x00-\x7F] هر کاراکتر غیر-ASCII را match می‌کنه
-   * - نیازی به \u escape نداره و در همه محیط‌ها کار می‌کنه
-   * - شامل فارسی، عربی، چینی، هندی، روسی و همه زبان‌های غیرلاتین
-   */
-  /**
-   * تبدیل نام به slug (URL-friendly)
-   * 
    * منطق: اگه نام فقط شامل حروف انگلیسی، اعداد، فاصله و - بود → slug بساز
    * وگرنه (فارسی/عربی/چینی/یا هر کاراکتر غیرمجاز) → nanoid
-   * 
-   * چرا این روش:
-   * - چک مثبت (فقط کاراکترهای مجاز) به جای چک منفی (کاراکترهای غیرمجاز)
-   * - robust در برابر encoding problems
-   * - حتی اگر حروف فارسی به ? تبدیل شوند، باز هم nanoid می‌سازد
    */
   private generateSlugFromName(name: string): string {
-    // چک کن آیا نام فقط شامل کاراکترهای مجاز است؟
-    // مجاز: a-z, A-Z, 0-9, فاصله, -, _
     const isOnlyLatin = /^[a-zA-Z0-9\s\-_]+$/.test(name);
-    
+
     if (!isOnlyLatin) {
       this.logger.debug('📝 نام شامل کاراکترهای غیرلاتین - استفاده از nanoid');
       return nanoid(10);
     }
 
-    // ساخت slug از حروف لاتین
     const baseSlug = name
       .toLowerCase()
       .replace(/[^\w\s-]/g, '')
@@ -149,6 +107,12 @@ export class BusinessesService {
     return this.ensureUniqueSlug(this.generateSlugFromName(dto.name));
   }
 
+  /**
+   * ایجاد کسب‌وکار + ارتقا نقش کاربر (CUSTOMER → OWNER)
+   *
+   * اگه کاربر از قبل OWNER/ADMIN بود → از متد create استفاده کن
+   * اگه CUSTOMER بود → در transaction: ارتقا نقش + ایجاد کسب‌وکار
+   */
   async createWithRoleUpgrade(
     userId: string,
     currentRole: UserRole,
@@ -164,36 +128,73 @@ export class BusinessesService {
           where: { id: userId },
           data: { role: UserRole.OWNER },
         });
-        return tx.business.create({
+
+        // ایجاد کسب‌وکار با همه فیلدها
+        // NOTE: `let business: any` برای جلوگیری از خطای type reassignment
+        let business: any = await tx.business.create({
           data: {
             name: dto.name,
             slug,
             address: dto.address,
             phone: dto.phone,
-            ownerId: userId,
+            description: dto.description,
+            logoUrl: dto.logoUrl,
             categoryId: dto.categoryId,
+            province: dto.province,
+            city: dto.city,
+            latitude: dto.latitude,
+            longitude: dto.longitude,
+            mapLink: dto.mapLink,
+            socialMedia: dto.socialMedia
+              ? JSON.parse(JSON.stringify(dto.socialMedia))
+              : undefined,
+            ownerId: userId,
           },
         });
+
+        // ──── 🛡️ WORKAROUND: Prisma 7 + PrismaPg driver adapter (Issue #27359) ────
+        // Driver adapter فیلدهای اختیاری رو در create() drop می‌کنه
+        // پس فیلدهایی که مقدار دارن رو با update ست می‌کنیم
+        const optionalFields: Partial<CreateBusinessDto> = {};
+        if (dto.description !== undefined) optionalFields.description = dto.description;
+        if (dto.logoUrl !== undefined) optionalFields.logoUrl = dto.logoUrl;
+        if (dto.province !== undefined) optionalFields.province = dto.province;
+        if (dto.city !== undefined) optionalFields.city = dto.city;
+        if (dto.latitude !== undefined) optionalFields.latitude = dto.latitude;
+        if (dto.longitude !== undefined) optionalFields.longitude = dto.longitude;
+        if (dto.mapLink !== undefined) optionalFields.mapLink = dto.mapLink;
+
+        if (Object.keys(optionalFields).length > 0) {
+          business = await tx.business.update({
+            where: { id: business.id },
+            data: optionalFields as any,
+          });
+        }
+
+        return business;
       });
-      this.logger.log(`✅ کسب‌وکار "${dto.name}" با slug "${slug}" ساخته شد + کاربر به OWNER ارتقا یافت`);
+
+      this.logger.log(
+        `✅ کسب‌وکار "${dto.name}" با slug "${slug}" ساخته شد + کاربر به OWNER ارتقا یافت`,
+      );
       return { ...result, roleUpgraded: true, newRole: UserRole.OWNER };
     }
 
-    const business = await this.prisma.business.create({
-      data: {
-        name: dto.name,
-        slug,
-        address: dto.address,
-        phone: dto.phone,
-        ownerId: userId,
-        categoryId: dto.categoryId,
-      },
-    });
-    this.logger.log(`✅ کسب‌وکار "${dto.name}" با slug "${slug}" ساخته شد (کاربر از قبل ${currentRole} بود)`);
-    return { ...business, roleUpgraded: false, newRole: currentRole };
+    // اگه کاربر از قبل OWNER/ADMIN بود، از متد create استفاده کن
+    return this.create(dto, userId, currentRole);
   }
 
-    async create(dto: CreateBusinessDto, ownerId: string, userRole: UserRole) {
+  /**
+   * ایجاد کسب‌وکار (بدون ارتقا نقش)
+   *
+   * شامل:
+   * - بررسی و ذخیره nationalId در User
+   * - تولید/اعتبارسنجی slug
+   * - ارتقا نقش به OWNER (اگه اولین کسب‌وکار باشه)
+   * - ایجاد کسب‌وکار با همه فیلدها
+   * - 🛡️ Workaround برای Prisma 7 driver adapter bug
+   */
+  async create(dto: CreateBusinessDto, ownerId: string, userRole: UserRole) {
     // ──── بررسی nationalId و ذخیره در User در صورت نیاز ────
     if (dto.nationalId) {
       const user = await this.prisma.user.findUnique({ where: { id: ownerId } });
@@ -201,19 +202,16 @@ export class BusinessesService {
         throw new NotFoundException('کاربر یافت نشد');
       }
 
-      // اگر nationalId کاربر از قبل ست شده، با nationalId ارسالی مقایسه کنیم
       if (user.nationalId && user.nationalId !== dto.nationalId) {
         throw new BadRequestException(
           'کد ملی شما قبلاً در پروفایل ثبت شده است. از همان کد ملی استفاده کنید.',
         );
       }
 
-      // اعتبارسنجی الگوریتم رسمی کد ملی ایران (checksum)
       if (!this.validateIranianNationalId(dto.nationalId)) {
         throw new BadRequestException('کد ملی نامعتبر است');
       }
 
-      // اگر nationalId کاربر null بود، آپدیت کنیم
       if (!user.nationalId) {
         await this.prisma.user.update({
           where: { id: ownerId },
@@ -254,8 +252,9 @@ export class BusinessesService {
       }
     }
 
-    // ──── ایجاد کسب‌وکار با همه فیلدهای جدید ────
-    const business = await this.prisma.business.create({
+    // ──── ایجاد کسب‌وکار با همه فیلدها ────
+    // NOTE: `let business: any` برای جلوگیری از خطای type reassignment
+    let business: any = await this.prisma.business.create({
       data: {
         name: dto.name,
         slug,
@@ -269,13 +268,35 @@ export class BusinessesService {
         latitude: dto.latitude,
         longitude: dto.longitude,
         mapLink: dto.mapLink,
-        socialMedia: dto.socialMedia ? (JSON.parse(JSON.stringify(dto.socialMedia))) : undefined,
+        socialMedia: dto.socialMedia
+          ? JSON.parse(JSON.stringify(dto.socialMedia))
+          : undefined,
         ownerId,
       },
       include: {
         category: true,
       },
     });
+
+    // ──── 🛡️ WORKAROUND: Prisma 7 + PrismaPg driver adapter (Issue #27359) ────
+    // Driver adapter فیلدهای اختیاری (optional) رو در create() drop می‌کنه
+    // پس فیلدهایی که واقعاً مقدار دارن رو با update ست می‌کنیم
+    const optionalFields: Partial<CreateBusinessDto> = {};
+    if (dto.description !== undefined) optionalFields.description = dto.description;
+    if (dto.logoUrl !== undefined) optionalFields.logoUrl = dto.logoUrl;
+    if (dto.province !== undefined) optionalFields.province = dto.province;
+    if (dto.city !== undefined) optionalFields.city = dto.city;
+    if (dto.latitude !== undefined) optionalFields.latitude = dto.latitude;
+    if (dto.longitude !== undefined) optionalFields.longitude = dto.longitude;
+    if (dto.mapLink !== undefined) optionalFields.mapLink = dto.mapLink;
+
+    if (Object.keys(optionalFields).length > 0) {
+      business = await this.prisma.business.update({
+        where: { id: business.id },
+        data: optionalFields as any,
+        include: { category: true },
+      });
+    }
 
     this.logger.log(`✅ Business created: ${business.name} (slug: ${business.slug})`);
 
@@ -292,7 +313,6 @@ export class BusinessesService {
   private validateIranianNationalId(nationalId: string): boolean {
     if (!/^\d{10}$/.test(nationalId)) return false;
 
-    // رد کدهای نامعتبر (همه رقم‌ها یکسان)
     if (/^(\d)\1{9}$/.test(nationalId)) return false;
 
     const digits = nationalId.split('').map(Number);
@@ -321,7 +341,7 @@ export class BusinessesService {
     });
   }
 
-    async findOne(id: string) {
+  async findOne(id: string) {
     const business = await this.prisma.business.findUnique({
       where: { id },
       include: {
@@ -338,7 +358,7 @@ export class BusinessesService {
     return business;
   }
 
-    async findBySlug(slug: string) {
+  async findBySlug(slug: string) {
     const business = await this.prisma.business.findUnique({
       where: { slug },
       include: {
@@ -375,7 +395,6 @@ export class BusinessesService {
   }
 
   async update(id: string, userId: string, dto: UpdateBusinessDto) {
-    // بررسی مالکیت
     const business = await this.prisma.business.findUnique({
       where: { id },
       select: { ownerId: true },
@@ -389,7 +408,6 @@ export class BusinessesService {
       throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
     }
 
-    // ساخت data object با فیلدهای مشخص (جلوگیری از type mismatch با Prisma)
     const data: any = {};
 
     if (dto.name !== undefined) data.name = dto.name;
@@ -424,21 +442,14 @@ export class BusinessesService {
     return { message: 'کسب‌وکار با موفقیت حذف شد' };
   }
 
-
   /**
    * جستجو و فیلتر کسب‌وکارها با pagination
-   * - q: جستجو در نام
-   * - city: فیلتر بر اساس شهر (بخشی از آدرس)
-   * - categoryId: فیلتر بر اساس دسته‌بندی
-   * - sort: newest, popular, most-viewed, name-asc, name-desc
-   * - page, limit: pagination
    */
   async search(dto: SearchBusinessesDto) {
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 12;
     const skip = (page - 1) * limit;
 
-    // ساخت where clause
     const where: any = {};
 
     if (dto.q) {
@@ -457,7 +468,6 @@ export class BusinessesService {
       where.createdAt = { gte: new Date(dto.since) };
     }
 
-    // مرتب‌سازی
     let orderBy: any = { createdAt: 'desc' };
     switch (dto.sort) {
       case 'newest':
@@ -477,8 +487,6 @@ export class BusinessesService {
         break;
     }
 
-    // 🎯 Interactive Transaction — پایدارتر از Batch Transaction برای Supabase
-    // جلوگیری از خطای P2028 تحت ترافیک بالا با timeoutهای محافظ
     const [items, total] = await this.prisma.$transaction(
       async (tx) => {
         const itemsResult = await tx.business.findMany({
@@ -495,8 +503,8 @@ export class BusinessesService {
         return [itemsResult, totalResult];
       },
       {
-        maxWait: 5000,   // حداکثر 5 ثانیه صبر برای شروع transaction
-        timeout: 15000,  // حداکثر 15 ثانیه برای کل عملیات
+        maxWait: 5000,
+        timeout: 15000,
       },
     );
 
@@ -515,7 +523,7 @@ export class BusinessesService {
     };
   }
 
-    async findByOwner(ownerId: string) {
+  async findByOwner(ownerId: string) {
     return this.prisma.business.findMany({
       where: { ownerId },
       include: {
