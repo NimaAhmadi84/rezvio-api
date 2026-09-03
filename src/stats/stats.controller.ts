@@ -61,8 +61,6 @@ export class StatsController {
   @Get('dashboard')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.ADMIN)
-  @UseInterceptors(CacheInterceptor)
-  @CacheTTL(60000)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'آمار داشبورد برای صاحب کسب‌وکار',

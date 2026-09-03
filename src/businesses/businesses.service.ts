@@ -523,14 +523,67 @@ export class BusinessesService {
     };
   }
 
+  /**
+   * محاسبه درصد تکمیل پروفایل کسب‌وکار (Single Source of Truth)
+   *
+   * مراحل شمارش‌شده (5 تا): اطلاعات، لوگو، خدمت‌ها، ساعات کاری، لینک رزرو
+   * مرحله اختیاری (در درصد حساب نمی‌شه): کارمندان
+   */
+  private computeCompletion(business: {
+    name: string;
+    address: string | null;
+    logoUrl: string | null;
+    slug: string;
+    _count: { services: number; staff: number; businessHours: number };
+  }) {
+    const steps = {
+      businessInfo: Boolean(business.name && business.address),
+      logo: Boolean(business.logoUrl),
+      services: business._count.services > 0,
+      hours: business._count.businessHours > 0,
+      shareLink: Boolean(business.slug),
+      staff: business._count.staff > 0,
+    };
+
+    const counted = [
+      steps.businessInfo,
+      steps.logo,
+      steps.services,
+      steps.hours,
+      steps.shareLink,
+    ];
+
+    return {
+      completionPercentage: Math.round(
+        (counted.filter(Boolean).length / counted.length) * 100,
+      ),
+      completionSteps: steps,
+    };
+  }
+
+  /**
+   * لیست کسب‌وکارهای من + درصد تکمیل در همان query (بدون N+1)
+   */
   async findByOwner(ownerId: string) {
-    return this.prisma.business.findMany({
+    const businesses = await this.prisma.business.findMany({
       where: { ownerId },
       include: {
         images: { orderBy: { sortOrder: 'asc' }, take: 1 },
-        _count: { select: { services: true, staff: true, bookings: true } },
+        _count: {
+          select: {
+            services: true,
+            staff: true,
+            bookings: true,
+            businessHours: true,
+          },
+        },
       },
     });
+
+    return businesses.map((business) => ({
+      ...business,
+      completion: this.computeCompletion(business),
+    }));
   }
   /**
  * محاسبه درصد تکمیل پروفایل کسب‌وکار
