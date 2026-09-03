@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,  // ← این باید باشه
   UseGuards,
   ParseUUIDPipe,
   HttpCode,
@@ -31,7 +32,7 @@ import { UserRole } from '@prisma/client';
 @ApiTags('Bookings')
 @Controller('bookings')
 export class BookingsController {
-  constructor(private readonly bookingsService: BookingsService) {}
+  constructor(private readonly bookingsService: BookingsService) { }
 
   @Post()
   @UseGuards(JwtAuthGuard)
@@ -52,6 +53,38 @@ export class BookingsController {
   @ApiResponse({ status: 200, description: 'لیست رزروهای کاربر' })
   findMyBookings(@CurrentUser() user: AuthUserDto) {
     return this.bookingsService.findMyBookings(user.id);
+  }
+  /**
+ * دریافت رزروهای پیش‌رو برای OWNER
+ * 
+ * حل N+1 Problem: همه رزروهای آینده owner از همه کسب‌وکارهاش رو
+ * در یک request برمی‌گردونه.
+ * 
+ * @param days - تعداد روز آینده (optional, default 7)
+ */
+  @Get('upcoming')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'رزروهای پیش‌رو برای صاحب کسب‌وکار',
+    description:
+      'همه رزروهای آینده owner از همه کسب‌وکارهاش. شامل customer, service, staff, business.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'لیست رزروهای پیش‌رو',
+    isArray: true,
+  })
+  @ApiResponse({ status: 401, description: 'احراز هویت لازم است' })
+  @ApiResponse({ status: 403, description: 'فقط OWNER/ADMIN مجاز است' })
+  getUpcomingBookings(
+    @CurrentUser() user: AuthUserDto,
+    @Query('days') days?: string,
+  ) {
+    const parsedDays = days ? parseInt(days, 10) : 7;
+    const validDays = isNaN(parsedDays) || parsedDays < 1 ? 7 : Math.min(parsedDays, 30);
+    return this.bookingsService.getUpcomingForOwner(user.id, validDays);
   }
 
   @Get('business/:businessId')

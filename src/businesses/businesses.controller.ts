@@ -15,7 +15,7 @@ import { UserRole } from '@prisma/client';
 @ApiTags('Businesses')
 @Controller('businesses')
 export class BusinessesController {
-  constructor(private readonly businessesService: BusinessesService) {}
+  constructor(private readonly businessesService: BusinessesService) { }
 
   /**
    * ساخت کسب‌وکار جدید + ارتقا خودکار CUSTOMER به OWNER
@@ -126,5 +126,50 @@ export class BusinessesController {
     @CurrentUser() user: AuthUserDto,
   ) {
     return this.businessesService.remove(id, user.id);
+  }
+  /**
+ * محاسبه درصد تکمیل پروفایل کسب‌وکار
+ * 
+ * برای نمایش در داشبورد: progress bar + چک‌لیست مراحل
+ */
+  @Get(':id/completion')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'درصد تکمیل پروفایل کسب‌وکار',
+    description:
+      'محاسبه درصد تکمیل setup: اطلاعات کسب‌وکار، لوگو، خدمت‌ها، ساعات کاری، لینک رزرو.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'درصد تکمیل و وضعیت هر مرحله',
+    schema: {
+      type: 'object',
+      properties: {
+        businessId: { type: 'string', example: 'uuid' },
+        completionPercentage: { type: 'number', example: 60 },
+        completionSteps: {
+          type: 'object',
+          properties: {
+            businessInfo: { type: 'boolean' },
+            logo: { type: 'boolean' },
+            services: { type: 'boolean' },
+            hours: { type: 'boolean' },
+            shareLink: { type: 'boolean' },
+            staff: { type: 'boolean' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'احراز هویت لازم است' })
+  @ApiResponse({ status: 403, description: 'شما مالک این کسب‌وکار نیستید' })
+  @ApiResponse({ status: 404, description: 'کسب‌وکار یافت نشد' })
+  getCompletion(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AuthUserDto,
+  ) {
+    return this.businessesService.getCompletion(id, user.id);
   }
 }

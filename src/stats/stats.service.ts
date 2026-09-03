@@ -15,7 +15,6 @@ export class StatsService {
    * - میانگین امتیاز (فعلاً placeholder چون Review نداریم)
    */
   async getLandingStats() {
-    // اجرای موازی همه query ها برای performance بهتر
     const [
       businessesCount,
       bookingsCount,
@@ -23,20 +22,14 @@ export class StatsService {
       categoriesCount,
       activeOwners,
     ] = await Promise.all([
-      // تعداد کسب‌وکارها
       this.prisma.business.count(),
-
-      // تعداد رزروها (همه، بدون فیلتر status)
       this.prisma.booking.count(),
-
-      // تعداد شهرهای یکتا
       this.prisma.business
         .groupBy({
           by: ['address'],
           where: { address: { not: null } },
         })
         .then((groups) => {
-          // استخراج شهر از آدرس (ساده: اولین کلمه قبل از کاما یا فاصله)
           const cities = new Set<string>();
           groups.forEach((group) => {
             if (group.address) {
@@ -49,11 +42,7 @@ export class StatsService {
           });
           return cities.size;
         }),
-
-      // تعداد دسته‌بندی‌ها
       this.prisma.category.count(),
-
-      // تعداد OWNER های فعال
       this.prisma.user.count({
         where: { role: 'OWNER' },
       }),
@@ -65,7 +54,6 @@ export class StatsService {
       activeCities,
       categoriesCount,
       activeOwners,
-      // میانگین امتیاز (placeholder تا Review system ساخته بشه)
       averageRating: 4.9,
     };
 
@@ -90,7 +78,6 @@ export class StatsService {
       this.prisma.booking.count(),
       this.prisma.booking.count({ where: { status: 'PENDING' } }),
       this.prisma.booking.count({ where: { status: 'COMPLETED' } }),
-      // Placeholder برای درآمد (بعداً از payment gateway)
       Promise.resolve(0),
     ]);
 
@@ -102,5 +89,84 @@ export class StatsService {
       completedBookings,
       totalRevenue,
     };
+  }
+
+  /**
+   * آمار داشبورد برای OWNER/ADMIN
+   * 
+   * این متد aggregated stats کلی از همه کسب‌وکارهای owner رو برمی‌گردونه.
+   * حل N+1 Problem: همه رزروها رو در یک query می‌گیریم، نه N query جدا.
+   * 
+   * @param userId - ID کاربر authenticated
+   * @returns آمار کلی شامل totalBusinesses, todayBookings, weekBookings, pendingBookings, totalBookings
+   */
+  async getDashboardStats(userId: string) {
+    // ──── Step 1: همه کسب‌وکارهای owner رو بگیر ────
+    const businesses = await this.prisma.business.findMany({
+      where: { ownerId: userId },
+      select: { id: true },
+    });
+
+    if (businesses.length === 0) {
+      return {
+        totalBusinesses: 0,
+        todayBookings: 0,
+        weekBookings: 0,
+        pendingBookings: 0,
+        totalBookings: 0,
+      };
+    }
+
+    const businessIds = businesses.map((b) => b.id);
+
+    // ──── Step 2: محاسبه محدوده‌های زمانی ────
+    const now = new Date();
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const weekFromNow = new Date(todayStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    // ──── Step 3: همه رزروهای owner رو در یک query بگیر ────
+    const allBookings = await this.prisma.booking.findMany({
+      where: {
+        businessId: { in: businessIds },
+      },
+      select: {
+        startTime: true,
+        status: true,
+      },
+    });
+
+    // ──── Step 4: محاسبه stats در memory (سریع‌تر از multiple queries) ────
+    const todayBookings = allBookings.filter((b) => {
+      const t = new Date(b.startTime);
+      return t >= todayStart && t < todayEnd;
+    }).length;
+
+    const weekBookings = allBookings.filter((b) => {
+      const t = new Date(b.startTime);
+      return t >= todayStart && t < weekFromNow;
+    }).length;
+
+    const pendingBookings = allBookings.filter(
+      (b) => b.status === 'PENDING',
+    ).length;
+
+    const stats = {
+      totalBusinesses: businesses.length,
+      todayBookings,
+      weekBookings,
+      pendingBookings,
+      totalBookings: allBookings.length,
+    };
+
+    this.logger.debug(
+      `📊 Dashboard stats for user ${userId}: ${JSON.stringify(stats)}`,
+    );
+
+    return stats;
   }
 }

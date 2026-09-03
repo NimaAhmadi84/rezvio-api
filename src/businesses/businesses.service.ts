@@ -10,7 +10,7 @@ import { SearchBusinessesDto } from './dto/search-businesses.dto';
 export class BusinessesService {
   private readonly logger = new Logger(BusinessesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   /**
    * تبدیل نام به slug (URL-friendly)
@@ -531,5 +531,76 @@ export class BusinessesService {
         _count: { select: { services: true, staff: true, bookings: true } },
       },
     });
+  }
+  /**
+ * محاسبه درصد تکمیل پروفایل کسب‌وکار
+ * 
+ * مراحل شمارش‌شده (5 تا):
+ * - businessInfo: نام + آدرس (در فرم ساخت اجبارین)
+ * - logo: لوگو آپلود شده
+ * - services: حداقل 1 خدمت
+ * - hours: حداقل 1 روز ساعات کاری
+ * - shareLink: slug فعال (لینک رزرو)
+ * 
+ * مرحله اختیاری (در درصد حساب نمی‌شه):
+ * - staff: شاید صاحب کسب‌وکار تنها کار می‌کنه
+ * 
+ * @param businessId - ID کسب‌وکار
+ * @param userId - ID کاربر authenticated (برای ownership check)
+ */
+  async getCompletion(businessId: string, userId: string) {
+    // ──── Ownership check ────
+    await this.checkOwnership(businessId, userId);
+
+    // ──── Fetch business with counts ────
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      include: {
+        _count: {
+          select: {
+            services: true,
+            staff: true,
+            businessHours: true,
+          },
+        },
+      },
+    });
+
+    if (!business) {
+      throw new NotFoundException('کسب‌وکار یافت نشد');
+    }
+
+    // ──── محاسبه مراحل ────
+    const steps = {
+      businessInfo: Boolean(business.name && business.address),
+      logo: Boolean(business.logoUrl),
+      services: business._count.services > 0,
+      hours: business._count.businessHours > 0,
+      shareLink: Boolean(business.slug),
+      staff: business._count.staff > 0,
+    };
+
+    // فقط مراحل غیراختیاری در درصد حساب می‌شن
+    const counted = [
+      steps.businessInfo,
+      steps.logo,
+      steps.services,
+      steps.hours,
+      steps.shareLink,
+    ];
+
+    const completionPercentage = Math.round(
+      (counted.filter(Boolean).length / counted.length) * 100,
+    );
+
+    this.logger.debug(
+      `✅ Business ${businessId} completion: ${completionPercentage}%`,
+    );
+
+    return {
+      businessId,
+      completionPercentage,
+      completionSteps: steps,
+    };
   }
 }
