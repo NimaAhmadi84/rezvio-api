@@ -569,6 +569,8 @@ export class BusinessesService {
       where: { ownerId },
       include: {
         images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+        category: true,
+        businessHours: { orderBy: { dayOfWeek: 'asc' } }, // ← NEW: برای محاسبه وضعیت باز/تعطیل
         _count: {
           select: {
             services: true,
