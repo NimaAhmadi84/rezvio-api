@@ -1,8 +1,10 @@
-import { Injectable,
+import {
+  Injectable,
   NotFoundException,
   ForbiddenException,
   ConflictException,
-  BadRequestException, Logger } from '@nestjs/common';
+  BadRequestException, Logger
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
@@ -29,7 +31,7 @@ export class BookingsService {
     private readonly prisma: PrismaService,
     private readonly businessesService: BusinessesService,
     private readonly availabilityService: AvailabilityService,
-  ) {}
+  ) { }
 
   /**
    * ساخت رزرو جدید با جلوگیری از double-booking
@@ -496,5 +498,87 @@ export class BookingsService {
   private timeToMinutes(time: string): number {
     const [hours, minutes] = time.split(':').map(Number);
     return hours * 60 + minutes;
+  }
+  /**
+ * دریافت رزروهای پیش‌رو (upcoming appointments) برای OWNER
+ * 
+ * حل N+1 Problem: همه رزروهای آینده owner از همه کسب‌وکارهاش رو
+ * در یک query می‌گیره (نه N query جدا).
+ * 
+ * @param userId - ID کاربر authenticated
+ * @param days - تعداد روز آینده (پیش‌فرض 7)
+ * @returns لیست رزروهای آینده با جزئیات کامل
+ */
+  async getUpcomingForOwner(userId: string, days = 7) {
+    // ──── Step 1: همه کسب‌وکارهای owner رو بگیر ────
+    const businesses = await this.prisma.business.findMany({
+      where: { ownerId: userId },
+      select: { id: true },
+    });
+
+    if (businesses.length === 0) {
+      return [];
+    }
+
+    const businessIds = businesses.map((b) => b.id);
+
+    // ──── Step 2: محاسبه محدوده زمانی ────
+    const now = new Date();
+    const future = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+
+    // ──── Step 3: همه رزروهای آینده owner رو در یک query بگیر ────
+    const bookings = await this.prisma.booking.findMany({
+      where: {
+        businessId: { in: businessIds },
+        startTime: {
+          gte: now,
+          lt: future,
+        },
+        status: {
+          notIn: ['CANCELLED', 'NO_SHOW'],
+        },
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        },
+        service: {
+          select: {
+            id: true,
+            name: true,
+            durationMinutes: true,
+            price: true,
+          },
+        },
+        staff: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logoUrl: true,
+          },
+        },
+      },
+      orderBy: {
+        startTime: 'asc',
+      },
+    });
+
+    this.logger.debug(
+      `📅 Upcoming bookings for user ${userId}: ${bookings.length} bookings in next ${days} days`,
+    );
+
+    return bookings;
   }
 }

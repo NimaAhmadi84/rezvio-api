@@ -10,7 +10,7 @@ import { SearchBusinessesDto } from './dto/search-businesses.dto';
 export class BusinessesService {
   private readonly logger = new Logger(BusinessesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   /**
    * تبدیل نام به slug (URL-friendly)
@@ -523,13 +523,137 @@ export class BusinessesService {
     };
   }
 
+  /**
+   * محاسبه درصد تکمیل پروفایل کسب‌وکار (Single Source of Truth)
+   *
+   * مراحل شمارش‌شده (5 تا): اطلاعات، لوگو، خدمت‌ها، ساعات کاری، لینک رزرو
+   * مرحله اختیاری (در درصد حساب نمی‌شه): کارمندان
+   */
+  private computeCompletion(business: {
+    name: string;
+    address: string | null;
+    logoUrl: string | null;
+    slug: string;
+    _count: { services: number; staff: number; businessHours: number };
+  }) {
+    const steps = {
+      businessInfo: Boolean(business.name && business.address),
+      logo: Boolean(business.logoUrl),
+      services: business._count.services > 0,
+      hours: business._count.businessHours > 0,
+      shareLink: Boolean(business.slug),
+      staff: business._count.staff > 0,
+    };
+
+    const counted = [
+      steps.businessInfo,
+      steps.logo,
+      steps.services,
+      steps.hours,
+      steps.shareLink,
+    ];
+
+    return {
+      completionPercentage: Math.round(
+        (counted.filter(Boolean).length / counted.length) * 100,
+      ),
+      completionSteps: steps,
+    };
+  }
+
+  /**
+   * لیست کسب‌وکارهای من + درصد تکمیل در همان query (بدون N+1)
+   */
   async findByOwner(ownerId: string) {
-    return this.prisma.business.findMany({
+    const businesses = await this.prisma.business.findMany({
       where: { ownerId },
       include: {
         images: { orderBy: { sortOrder: 'asc' }, take: 1 },
-        _count: { select: { services: true, staff: true, bookings: true } },
+        _count: {
+          select: {
+            services: true,
+            staff: true,
+            bookings: true,
+            businessHours: true,
+          },
+        },
       },
     });
+
+    return businesses.map((business) => ({
+      ...business,
+      completion: this.computeCompletion(business),
+    }));
+  }
+  /**
+ * محاسبه درصد تکمیل پروفایل کسب‌وکار
+ * 
+ * مراحل شمارش‌شده (5 تا):
+ * - businessInfo: نام + آدرس (در فرم ساخت اجبارین)
+ * - logo: لوگو آپلود شده
+ * - services: حداقل 1 خدمت
+ * - hours: حداقل 1 روز ساعات کاری
+ * - shareLink: slug فعال (لینک رزرو)
+ * 
+ * مرحله اختیاری (در درصد حساب نمی‌شه):
+ * - staff: شاید صاحب کسب‌وکار تنها کار می‌کنه
+ * 
+ * @param businessId - ID کسب‌وکار
+ * @param userId - ID کاربر authenticated (برای ownership check)
+ */
+  async getCompletion(businessId: string, userId: string) {
+    // ──── Ownership check ────
+    await this.checkOwnership(businessId, userId);
+
+    // ──── Fetch business with counts ────
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      include: {
+        _count: {
+          select: {
+            services: true,
+            staff: true,
+            businessHours: true,
+          },
+        },
+      },
+    });
+
+    if (!business) {
+      throw new NotFoundException('کسب‌وکار یافت نشد');
+    }
+
+    // ──── محاسبه مراحل ────
+    const steps = {
+      businessInfo: Boolean(business.name && business.address),
+      logo: Boolean(business.logoUrl),
+      services: business._count.services > 0,
+      hours: business._count.businessHours > 0,
+      shareLink: Boolean(business.slug),
+      staff: business._count.staff > 0,
+    };
+
+    // فقط مراحل غیراختیاری در درصد حساب می‌شن
+    const counted = [
+      steps.businessInfo,
+      steps.logo,
+      steps.services,
+      steps.hours,
+      steps.shareLink,
+    ];
+
+    const completionPercentage = Math.round(
+      (counted.filter(Boolean).length / counted.length) * 100,
+    );
+
+    this.logger.debug(
+      `✅ Business ${businessId} completion: ${completionPercentage}%`,
+    );
+
+    return {
+      businessId,
+      completionPercentage,
+      completionSteps: steps,
+    };
   }
 }
