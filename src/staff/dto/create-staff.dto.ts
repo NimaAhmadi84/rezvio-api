@@ -1,11 +1,23 @@
-import { IsString, IsEmail, IsOptional, MinLength, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsEmail,
+  IsOptional,
+  MinLength,
+  MaxLength,
+  Matches,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateStaffDto {
-  @ApiProperty({ example: 'علی احمدی', description: 'نام کارمند' })
+  @ApiProperty({
+    example: 'علی احمدی',
+    description: 'نام و نام خانوادگی کارمند',
+  })
   @IsString()
-  @MinLength(2, { message: 'نام کارمند باید حداقل ۲ کاراکتر باشد' })
-  @MaxLength(100, { message: 'نام کارمند نباید بیش از ۱۰۰ کاراکتر باشد' })
+  @MinLength(2, { message: 'نام و نام خانوادگی باید حداقل ۲ کاراکتر باشد' })
+  @MaxLength(100, {
+    message: 'نام و نام خانوادگی نباید بیش از ۱۰۰ کاراکتر باشد',
+  })
   name!: string;
 
   @ApiPropertyOptional({ example: 'ali@example.com' })
@@ -13,10 +25,15 @@ export class CreateStaffDto {
   @IsOptional()
   email?: string;
 
-  @ApiPropertyOptional({ example: '09121234567' })
+  @ApiProperty({
+    example: '09121234567',
+    description: 'شماره موبایل کارمند (اجباری)',
+  })
   @IsString()
-  @IsOptional()
-  phone?: string;
+  @Matches(/^09\d{9}$/, {
+    message: 'شماره موبایل باید به فرمت ۰۹۱۲۳۴۵۶۷۸۹ باشد',
+  })
+  phone!: string;
 
   @ApiProperty({ description: 'شناسه کسب‌وکار' })
   @IsString()
