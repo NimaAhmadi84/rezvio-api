@@ -28,7 +28,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUserDto } from '../auth/dto/auth-response.dto';
 import { UserRole } from '@prisma/client';
-
+import { QueryBookingsDto } from './dto/query-bookings.dto';
 @ApiTags('Bookings')
 @Controller('bookings')
 export class BookingsController {
@@ -91,14 +91,20 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.ADMIN)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'دریافت رزروهای کسب‌وکار (فقط مالک)' })
-  @ApiResponse({ status: 200, description: 'لیست رزروهای کسب‌وکار' })
+  @ApiOperation({
+    summary: 'دریافت رزروهای کسب‌وکار با فیلتر + pagination + stats',
+    description:
+      'بازه حداکثر ۳۱ روز. درآمد فقط از COMPLETED. Stats روی کل بازه (مستقل از صفحه).',
+  })
+  @ApiResponse({ status: 200, description: 'لیست رزروها + meta + stats' })
+  @ApiResponse({ status: 400, description: 'بازه بیش از ۳۱ روز' })
   @ApiResponse({ status: 403, description: 'دسترسی غیرمجاز' })
   findBusinessBookings(
     @Param('businessId', new ParseUUIDPipe()) businessId: string,
     @CurrentUser() user: AuthUserDto,
+    @Query() query: QueryBookingsDto,
   ) {
-    return this.bookingsService.findBusinessBookings(businessId, user.id);
+    return this.bookingsService.findBusinessBookings(businessId, user.id, query);
   }
 
   @Get(':id')

@@ -3,11 +3,13 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
-  BadRequestException, Logger
+  BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
+import { QueryBookingsDto } from './dto/query-bookings.dto';
 import { BusinessesService } from '../businesses/businesses.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { BookingStatus } from '@prisma/client';
@@ -19,9 +21,9 @@ import { BookingStatus } from '@prisma/client';
 const STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
   [BookingStatus.PENDING]: [BookingStatus.CONFIRMED, BookingStatus.CANCELLED],
   [BookingStatus.CONFIRMED]: [BookingStatus.COMPLETED, BookingStatus.CANCELLED],
-  [BookingStatus.COMPLETED]: [], // وضعیت نهایی
-  [BookingStatus.CANCELLED]: [], // وضعیت نهایی
-  [BookingStatus.NO_SHOW]: [],   // وضعیت نهایی
+  [BookingStatus.COMPLETED]: [],
+  [BookingStatus.CANCELLED]: [],
+  [BookingStatus.NO_SHOW]: [],
 };
 
 @Injectable()
@@ -31,7 +33,7 @@ export class BookingsService {
     private readonly prisma: PrismaService,
     private readonly businessesService: BusinessesService,
     private readonly availabilityService: AvailabilityService,
-  ) { }
+  ) {}
 
   /**
    * ساخت رزرو جدید با جلوگیری از double-booking
@@ -98,7 +100,9 @@ export class BookingsService {
     }
 
     // محاسبه endTime بر اساس duration خدمت
-    const endTime = new Date(startTime.getTime() + service.durationMinutes * 60 * 1000);
+    const endTime = new Date(
+      startTime.getTime() + service.durationMinutes * 60 * 1000,
+    );
 
     // 6. چک کردن ساعات کاری برای آن روز
     const bookingDate = new Date(startTime);
@@ -152,12 +156,9 @@ export class BookingsService {
     }
 
     // 8. ایجاد رزرو در transaction برای جلوگیری از race condition
-    // این مهم‌ترین بخش است!
     try {
       const booking = await this.prisma.$transaction(
         async (tx) => {
-          // داخل transaction دوباره چک می‌کنیم که overlap نباشد
-          // این کار از race condition جلوگیری می‌کند
           const overlappingBooking = await tx.booking.findFirst({
             where: {
               businessId: dto.businessId,
@@ -180,7 +181,6 @@ export class BookingsService {
             );
           }
 
-          // ایجاد رزرو
           return tx.booking.create({
             data: {
               businessId: dto.businessId,
@@ -195,12 +195,10 @@ export class BookingsService {
           });
         },
         {
-          // timeout برای transaction: 10 ثانیه
           timeout: 10000,
         },
       );
 
-      // برگرداندن رزرو با جزئیات کامل
       return this.findOne(booking.id);
     } catch (error) {
       if (error instanceof ConflictException) {
@@ -244,20 +242,141 @@ export class BookingsService {
   }
 
   /**
-   * دریافت رزروهای یک business (فقط OWNER)
+   * دریافت رزروهای کسب‌وکار با فیلتر + pagination + stats
+   *
+   * 🎯 منطق کسب‌وکار:
+   * - بازه زمانی حداکثر ۳۱ روز (برای جلوگیری از فشار سرور)
+   * - stats روی کل بازه محاسبه می‌شه (مستقل از صفحه فعلی)
+   * - درآمد = فقط COMPLETED (قانون ثبت‌شده کسب‌وکار)
+   * - search سمت سرور با ILIKE (case-insensitive) برای عملکرد بهتر
    */
-  async findBusinessBookings(businessId: string, userId: string) {
-    // بررسی مالکیت business
+  async findBusinessBookings(
+    businessId: string,
+    userId: string,
+    query?: QueryBookingsDto,
+  ) {
+    // ──── Step 1: بررسی مالکیت ────
     await this.businessesService.checkOwnership(businessId, userId);
 
-    return this.prisma.booking.findMany({
-      where: { businessId },
+    // ──── Step 2: محاسبه بازه زمانی (default: ۳۰ روز گذشته) ────
+    const now = new Date();
+    const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const from = query?.from ? new Date(query.from) : defaultFrom;
+    const to = query?.to ? new Date(query.to) : now;
+
+    // to رو تا پایان روز ببریم (23:59:59)
+    to.setHours(23, 59, 59, 999);
+
+    // اعتبارسنجی بازه حداکثر ۳۱ روز
+    const dayDiff = Math.ceil(
+      (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    if (dayDiff > 31) {
+      throw new BadRequestException(
+        'بازه زمانی نمی‌تواند بیش از ۳۱ روز باشد (برای حفاظت از سرور)',
+      );
+    }
+    if (dayDiff < 0) {
+      throw new BadRequestException('تاریخ پایان باید بعد از تاریخ شروع باشد');
+    }
+
+    // ──── Step 3: محاسبه stats روی کل بازه (مستقل از pagination) ────
+    const statsWhere = {
+      businessId,
+      startTime: { gte: from, lte: to },
+    };
+
+    const [
+      pendingCount,
+      confirmedCount,
+      completedCount,
+      cancelledCount,
+      noShowCount,
+      revenueResult,
+    ] = await Promise.all([
+      this.prisma.booking.count({
+        where: { ...statsWhere, status: BookingStatus.PENDING },
+      }),
+      this.prisma.booking.count({
+        where: { ...statsWhere, status: BookingStatus.CONFIRMED },
+      }),
+      this.prisma.booking.count({
+        where: { ...statsWhere, status: BookingStatus.COMPLETED },
+      }),
+      this.prisma.booking.count({
+        where: { ...statsWhere, status: BookingStatus.CANCELLED },
+      }),
+      this.prisma.booking.count({
+        where: { ...statsWhere, status: BookingStatus.NO_SHOW },
+      }),
+      // 🎯 درآمد: فقط COMPLETED در بازه — raw SQL برای join با service
+      this.prisma.$queryRaw<[{ total: number | null }]>`
+        SELECT COALESCE(SUM(s.price), 0) as total
+        FROM bookings b
+        JOIN services s ON b."serviceId" = s.id
+        WHERE b."businessId" = ${businessId}
+          AND b.status = 'COMPLETED'
+          AND b."startTime" >= ${from}
+          AND b."startTime" <= ${to}
+      `,
+    ]);
+
+    const stats = {
+      pending: pendingCount,
+      confirmed: confirmedCount,
+      completed: completedCount,
+      cancelled: cancelledCount,
+      noShow: noShowCount,
+      totalRevenue: Number(revenueResult[0]?.total || 0),
+    };
+
+    // ──── Step 4: ساخت where clause برای لیست (با فیلترها) ────
+    const listWhere: any = {
+      businessId,
+      startTime: { gte: from, lte: to },
+    };
+
+    // فیلتر وضعیت (ALL یعنی همه)
+    const validStatuses = [
+      'PENDING',
+      'CONFIRMED',
+      'COMPLETED',
+      'CANCELLED',
+      'NO_SHOW',
+    ];
+    if (query?.status && validStatuses.includes(query.status)) {
+      listWhere.status = query.status;
+    }
+
+    // جستجو در customer/service/staff/phone
+    if (query?.q && query.q.trim()) {
+      const q = query.q.trim();
+      listWhere.OR = [
+        { customer: { name: { contains: q, mode: 'insensitive' } } },
+        { customer: { phone: { contains: q } } },
+        { service: { name: { contains: q, mode: 'insensitive' } } },
+        { staff: { name: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
+    // ──── Step 5: Pagination ────
+    const page = query?.page || 1;
+    const limit = query?.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const total = await this.prisma.booking.count({ where: listWhere });
+
+    // ──── Step 6: Query با include و sort ────
+    const items = await this.prisma.booking.findMany({
+      where: listWhere,
       include: {
         customer: {
           select: {
             id: true,
             name: true,
             email: true,
+            phone: true,
           },
         },
         service: {
@@ -276,7 +395,26 @@ export class BookingsService {
         },
       },
       orderBy: { startTime: 'desc' },
+      skip,
+      take: limit,
     });
+
+    // ──── Step 7: ساخت meta ────
+    const totalPages = Math.ceil(total / limit) || 1;
+    const meta = {
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    };
+
+    this.logger.debug(
+      `📋 Business ${businessId} bookings: ${items.length}/${total} (page ${page}/${totalPages}) in ${dayDiff}-day range`,
+    );
+
+    return { items, meta, stats };
   }
 
   /**
@@ -327,7 +465,12 @@ export class BookingsService {
   /**
    * تغییر وضعیت رزرو
    */
-  async updateStatus(id: string, userId: string, userRole: string, dto: UpdateBookingStatusDto) {
+  async updateStatus(
+    id: string,
+    userId: string,
+    userRole: string,
+    dto: UpdateBookingStatusDto,
+  ) {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
@@ -343,25 +486,18 @@ export class BookingsService {
       throw new NotFoundException('رزرو یافت نشد');
     }
 
-    // بررسی دسترسی:
-    // CUSTOMER فقط می‌تواند رزروهای خودش را CANCEL کند
-    // OWNER می‌تواند رزروهای business خودش را مدیریت کند
-    // ADMIN به همه دسترسی دارد
     const isCustomer = userRole === 'CUSTOMER';
     const isOwner = userRole === 'OWNER';
     const isAdmin = userRole === 'ADMIN';
 
     if (isCustomer) {
-      // CUSTOMER فقط مالک رزرو خودش است
       if (booking.customerId !== userId) {
         throw new ForbiddenException('شما مالک این رزرو نیستید');
       }
-      // CUSTOMER فقط می‌تواند CANCEL کند
       if (dto.status !== BookingStatus.CANCELLED) {
         throw new ForbiddenException('شما فقط می‌توانید رزرو خود را لغو کنید');
       }
     } else if (isOwner) {
-      // OWNER باید مالک business باشد
       if (booking.business.ownerId !== userId) {
         throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
       }
@@ -369,7 +505,6 @@ export class BookingsService {
       throw new ForbiddenException('دسترسی غیرمجاز');
     }
 
-    // بررسی قوانین تغییر وضعیت
     const allowedTransitions = STATUS_TRANSITIONS[booking.status];
     if (!allowedTransitions.includes(dto.status)) {
       throw new BadRequestException(
@@ -377,9 +512,6 @@ export class BookingsService {
       );
     }
 
-    // 🎯 محاسبه تغییر bookingsCount برای کسب‌وکار
-    // PENDING → CONFIRMED: +1 (رزرو تأیید شد)
-    // CONFIRMED → CANCELLED: -1 (رزرو لغو شد، rollback)
     let bookingsCountDelta = 0;
     const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
     const willBeConfirmed = dto.status === BookingStatus.CONFIRMED;
@@ -387,20 +519,22 @@ export class BookingsService {
 
     if (!wasConfirmed && willBeConfirmed) {
       bookingsCountDelta = 1;
-      this.logger.log(`📈 Incrementing bookingsCount for business ${booking.businessId} (PENDING → CONFIRMED)`);
+      this.logger.log(
+        `📈 Incrementing bookingsCount for business ${booking.businessId} (PENDING → CONFIRMED)`,
+      );
     } else if (wasConfirmed && willBeCancelled) {
       bookingsCountDelta = -1;
-      this.logger.log(`📉 Decrementing bookingsCount for business ${booking.businessId} (CONFIRMED → CANCELLED)`);
+      this.logger.log(
+        `📉 Decrementing bookingsCount for business ${booking.businessId} (CONFIRMED → CANCELLED)`,
+      );
     }
 
-    // 🔄 اجرای atomic transaction: update booking + update business.bookingsCount
     return this.prisma.$transaction(async (tx) => {
       const updatedBooking = await tx.booking.update({
         where: { id },
         data: { status: dto.status },
       });
 
-      // فقط اگر delta غیر صفر باشد، business را update می‌کنیم
       if (bookingsCountDelta !== 0) {
         await tx.business.update({
           where: { id: booking.businessId },
@@ -418,7 +552,6 @@ export class BookingsService {
 
   /**
    * لغو رزرو (DELETE)
-   * این متد فقط status را به CANCELLED تغییر می‌دهد
    */
   async cancel(id: string, userId: string, userRole: string) {
     const booking = await this.prisma.booking.findUnique({
@@ -436,7 +569,6 @@ export class BookingsService {
       throw new NotFoundException('رزرو یافت نشد');
     }
 
-    // بررسی دسترسی
     const isCustomer = userRole === 'CUSTOMER';
     const isOwner = userRole === 'OWNER';
     const isAdmin = userRole === 'ADMIN';
@@ -445,15 +577,15 @@ export class BookingsService {
       if (booking.customerId !== userId) {
         throw new ForbiddenException('شما مالک این رزرو نیستید');
       }
-      // CUSTOMER فقط می‌تواند رزروهای PENDING را لغو کند
       if (booking.status !== BookingStatus.PENDING) {
-        throw new BadRequestException('فقط رزروهای در انتظار تأیید قابل لغو هستند');
+        throw new BadRequestException(
+          'فقط رزروهای در انتظار تأیید قابل لغو هستند',
+        );
       }
     } else if (isOwner) {
       if (booking.business.ownerId !== userId) {
         throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
       }
-      // OWNER نمی‌تواند رزروهای COMPLETED را لغو کند
       if (booking.status === BookingStatus.COMPLETED) {
         throw new BadRequestException('رزروهای تکمیل شده قابل لغو نیستند');
       }
@@ -461,22 +593,21 @@ export class BookingsService {
       throw new ForbiddenException('دسترسی غیرمجاز');
     }
 
-    // 🎯 اگر رزرو قبلاً CONFIRMED بوده، باید bookingsCount را کاهش دهیم
     const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
     const bookingsCountDelta = wasConfirmed ? -1 : 0;
 
     if (wasConfirmed) {
-      this.logger.log(`📉 Decrementing bookingsCount for business ${booking.businessId} (CANCEL of CONFIRMED booking)`);
+      this.logger.log(
+        `📉 Decrementing bookingsCount for business ${booking.businessId} (CANCEL of CONFIRMED booking)`,
+      );
     }
 
-    // 🔄 اجرای atomic transaction
     return this.prisma.$transaction(async (tx) => {
       const cancelledBooking = await tx.booking.update({
         where: { id },
         data: { status: BookingStatus.CANCELLED },
       });
 
-      // فقط اگر رزرو قبلاً CONFIRMED بوده، business را update می‌کنیم
       if (bookingsCountDelta !== 0) {
         await tx.business.update({
           where: { id: booking.businessId },
@@ -499,18 +630,11 @@ export class BookingsService {
     const [hours, minutes] = time.split(':').map(Number);
     return hours * 60 + minutes;
   }
+
   /**
- * دریافت رزروهای پیش‌رو (upcoming appointments) برای OWNER
- * 
- * حل N+1 Problem: همه رزروهای آینده owner از همه کسب‌وکارهاش رو
- * در یک query می‌گیره (نه N query جدا).
- * 
- * @param userId - ID کاربر authenticated
- * @param days - تعداد روز آینده (پیش‌فرض 7)
- * @returns لیست رزروهای آینده با جزئیات کامل
- */
+   * دریافت رزروهای پیش‌رو (upcoming appointments) برای OWNER
+   */
   async getUpcomingForOwner(userId: string, days = 7) {
-    // ──── Step 1: همه کسب‌وکارهای owner رو بگیر ────
     const businesses = await this.prisma.business.findMany({
       where: { ownerId: userId },
       select: { id: true },
@@ -522,11 +646,9 @@ export class BookingsService {
 
     const businessIds = businesses.map((b) => b.id);
 
-    // ──── Step 2: محاسبه محدوده زمانی ────
     const now = new Date();
     const future = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 
-    // ──── Step 3: همه رزروهای آینده owner رو در یک query بگیر ────
     const bookings = await this.prisma.booking.findMany({
       where: {
         businessId: { in: businessIds },
