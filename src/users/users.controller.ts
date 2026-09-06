@@ -36,15 +36,27 @@ export class UsersController {
   }
 
   /**
-   * آپدیت پروفایل کاربر (فقط nationalId — یک‌بار ثبت)
-   * ⚠️ این endpoint باید قبل از :id تعریف شود تا routing درست کار کند
+   * دریافت اطلاعات کاربر فعلی — مستقیم از دیتابیس
+   * شامل nationalId و phone (برای نمایش در پروفایل و فرم ویرایش)
+   * ⚠️ باید قبل از :id تعریف شود
+   */
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'دریافت اطلاعات کاربر فعلی (با nationalId)' })
+  @ApiResponse({ status: 200, description: 'اطلاعات کاربر' })
+  @ApiResponse({ status: 401, description: 'احراز هویت نشده' })
+  getMe(@CurrentUser() user: AuthUserDto) {
+    return this.usersService.findOne(user.id);
+  }
+
+  /**
+   * آپدیت پروفایل کاربر (nationalId — یک‌بار ثبت)
    */
   @Patch('profile')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'آپدیت پروفایل کاربر (nationalId — یک‌بار ثبت)' })
-  @ApiResponse({ status: 200, description: 'پروفایل با موفقیت به‌روزرسانی شد' })
-  @ApiResponse({ status: 400, description: 'کد ملی نامعتبر یا قبلاً ثبت شده' })
   updateProfile(@CurrentUser() user: AuthUserDto, @Body() dto: UpdateProfileDto) {
     return this.usersService.updateProfile(user.id, dto);
   }
