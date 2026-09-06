@@ -1,8 +1,22 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  ParseUUIDPipe,
+  UseGuards,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthUserDto } from '../auth/dto/auth-response.dto';
 
 @ApiTags('Users')
 @Controller('users')
@@ -19,6 +33,20 @@ export class UsersController {
   @ApiOperation({ summary: 'دریافت لیست همه کاربران' })
   findAll() {
     return this.usersService.findAll();
+  }
+
+  /**
+   * آپدیت پروفایل کاربر (فقط nationalId — یک‌بار ثبت)
+   * ⚠️ این endpoint باید قبل از :id تعریف شود تا routing درست کار کند
+   */
+  @Patch('profile')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'آپدیت پروفایل کاربر (nationalId — یک‌بار ثبت)' })
+  @ApiResponse({ status: 200, description: 'پروفایل با موفقیت به‌روزرسانی شد' })
+  @ApiResponse({ status: 400, description: 'کد ملی نامعتبر یا قبلاً ثبت شده' })
+  updateProfile(@CurrentUser() user: AuthUserDto, @Body() dto: UpdateProfileDto) {
+    return this.usersService.updateProfile(user.id, dto);
   }
 
   @Get(':id')
