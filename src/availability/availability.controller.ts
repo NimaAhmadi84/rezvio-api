@@ -11,11 +11,18 @@ import {
   ParseUUIDPipe,
   ParseIntPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 
 import { AvailabilityService } from './availability.service';
 import { CreateBusinessHourDto } from './dto/create-business-hour.dto';
 import { CreateHolidayDto } from './dto/create-holiday.dto';
+import { CreateBatchHolidayDto } from './dto/create-batch-holiday.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -67,11 +74,55 @@ export class AvailabilityController {
   // Holidays Endpoints
   // ============================================
 
+  /**
+   * افزودن تعطیلات بازه‌ای (Phase 23)
+   *
+   * ⚠️ IMPORTANT: این endpoint باید قبل از POST /holidays باشه
+   * چون /holidays/batch زیرمجموعه /holidays است و NestJS به ترتیب match می‌کنه
+   *
+   * کاربرد: نوروز (۱۳ روز)، مسافرت (یک هفته)، مریضی طولانی
+   */
+  @Post('holidays/batch')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'افزودن تعطیلات بازه‌ای (چند روز یکجا)',
+    description:
+      'تعطیلات نوروز، مسافرت و... — startDate تا endDate (inclusive). حداکثر ۹۰ روز. تاریخ‌های تکراری به صورت خودکار skip می‌شوند.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'تعطیلات با موفقیت ایجاد شدند',
+    schema: {
+      example: {
+        created: 13,
+        skipped: 2,
+        total: 15,
+        reason: 'تعطیلات نوروز',
+        startDate: '2026-03-20',
+        endDate: '2026-04-03',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'بازه نامعتبر، بیش از ۹۰ روز، یا همه تاریخ‌ها تکراری',
+  })
+  @ApiResponse({ status: 401, description: 'احراز هویت لازم است' })
+  @ApiResponse({ status: 403, description: 'دسترسی غیرمجاز' })
+  addBatchHoliday(
+    @CurrentUser() user: AuthUserDto,
+    @Body() dto: CreateBatchHolidayDto,
+  ) {
+    return this.availabilityService.addBatchHolidays(user.id, dto);
+  }
+
   @Post('holidays')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.ADMIN)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'افزودن تعطیلی' })
+  @ApiOperation({ summary: 'افزودن یک روز تعطیلی' })
   addHoliday(@CurrentUser() user: AuthUserDto, @Body() dto: CreateHolidayDto) {
     return this.availabilityService.addHoliday(user.id, dto);
   }
