@@ -20,7 +20,7 @@ export class SlotsController {
     @Param('slug') slug: string,
     @Query(new ValidationPipe({ transform: true, whitelist: true })) query: SlotsQueryDto,
   ) {
-    const slots = await this.slotsService.getAvailableSlots(
+    const result = await this.slotsService.getAvailableSlots(
       slug,
       query.serviceId,
       query.staffId,
@@ -29,8 +29,9 @@ export class SlotsController {
 
     return {
       date: query.date,
-      slots,
-      count: slots.length,
+      slots: result.slots,
+      count: result.slots.length,
+      emptyReason: result.emptyReason,
     };
   }
 

@@ -11,6 +11,20 @@ import { CreateHolidayDto } from './dto/create-holiday.dto';
 import { CreateBatchHolidayDto } from './dto/create-batch-holiday.dto';
 import { BusinessesService } from '../businesses/businesses.service';
 
+// ──── UTC Date Helpers (جلوگیری از timezone drift ایران) ────
+// چرا؟ new Date('2026-09-15') در ایران می‌شود 2026-09-14T20:30:00Z (یک روز قبل)
+const parseISOtoUTC = (iso: string): Date => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+};
+
+const toUTCISO = (d: Date): string => {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 @Injectable()
 export class AvailabilityService {
   private readonly logger = new Logger(AvailabilityService.name);
@@ -98,10 +112,12 @@ export class AvailabilityService {
     // بررسی مالکیت business
     await this.businessesService.checkOwnership(dto.businessId, userId);
 
+    // ⚠️ CRITICAL: استفاده از parseISOtoUTC برای جلوگیری از timezone drift
+    // بدون این، '2026-09-15' در ایران به '2026-09-14' drift می‌کند
     const holiday = await this.prisma.holiday.create({
       data: {
         businessId: dto.businessId,
-        date: new Date(dto.date),
+        date: parseISOtoUTC(dto.date),
         reason: dto.reason,
       },
     });
@@ -117,7 +133,7 @@ export class AvailabilityService {
    * منطق:
    * 1. اعتبارسنجی مالکیت business
    * 2. اعتبارسنجی بازه (startDate <= endDate, max 90 روز)
-   * 3. تولید آرایه تاریخ‌ها (inclusive)
+   * 3. تولید آرایه تاریخ‌ها (inclusive) با UTC برای جلوگیری از drift
    * 4. بررسی تکراری نبودن با holidays موجود
    * 5. ایجاد در transaction (atomicity)
    *
@@ -127,9 +143,9 @@ export class AvailabilityService {
     // ──── Step 1: اعتبارسنجی مالکیت ────
     await this.businessesService.checkOwnership(dto.businessId, userId);
 
-    // ──── Step 2: اعتبارسنجی بازه ────
-    const startDate = new Date(dto.startDate);
-    const endDate = new Date(dto.endDate);
+    // ──── Step 2: اعتبارسنجی بازه (با UTC helper) ────
+    const startDate = parseISOtoUTC(dto.startDate);
+    const endDate = parseISOtoUTC(dto.endDate);
 
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       throw new BadRequestException('تاریخ‌های نامعتبر');
@@ -154,23 +170,9 @@ export class AvailabilityService {
     }
 
     // ──── Step 3: تولید آرایه تاریخ‌ها (UTC برای جلوگیری از timezone drift) ────
-    // Helper: تبدیل ISO string به UTC Date بدون timezone drift
-    const parseISOtoUTC = (iso: string): Date => {
-      const [y, m, d] = iso.split('-').map(Number);
-      return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
-    };
-
-    // Helper: تبدیل Date به YYYY-MM-DD با UTC
-    const toUTCISO = (d: Date): string => {
-      const y = d.getUTCFullYear();
-      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(d.getUTCDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    };
-
     const dates: Date[] = [];
-    const cursor = parseISOtoUTC(dto.startDate);
-    const endUtc = parseISOtoUTC(dto.endDate);
+    const cursor = new Date(startDate);
+    const endUtc = new Date(endDate);
 
     while (cursor.getTime() <= endUtc.getTime()) {
       dates.push(new Date(cursor.getTime()));
@@ -237,10 +239,15 @@ export class AvailabilityService {
 
     const where: any = { businessId };
 
+    // ⚠️ CRITICAL: استفاده از parseISOtoUTC برای جلوگیری از drift
     if (startDate || endDate) {
       where.date = {};
-      if (startDate) where.date.gte = new Date(startDate);
-      if (endDate) where.date.lte = new Date(endDate);
+      if (startDate) where.date.gte = parseISOtoUTC(startDate);
+      if (endDate) {
+        const end = parseISOtoUTC(endDate);
+        end.setUTCHours(23, 59, 59, 999);
+        where.date.lte = end;
+      }
     }
 
     return this.prisma.holiday.findMany({

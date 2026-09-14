@@ -6,6 +6,32 @@ export interface SlotResult {
   endTime: string;   // فرمت HH:MM
 }
 
+export type SlotEmptyReason = 'HOLIDAY' | 'WEEKLY_CLOSED' | 'FULL' | 'PAST' | null;
+
+// ──── UTC Date Helpers (جلوگیری از timezone drift ایران) ────
+// چرا؟ new Date('2026-09-15') در ایران می‌شود 2026-09-14T20:30:00Z (یک روز قبل)
+// این helper ها تاریخ را دقیقاً همان روزی که کاربر گفته می‌سازند
+const parseISOtoUTC = (iso: string): Date => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+};
+
+const toUTCISO = (d: Date): string => {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+// امروز در timezone محلی کاربر به صورت YYYY-MM-DD
+const getLocalTodayISO = (): string => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 @Injectable()
 export class SlotsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -18,7 +44,7 @@ export class SlotsService {
     serviceId: string,
     staffId: string,
     dateString: string,
-  ): Promise<SlotResult[]> {
+  ): Promise<{ slots: SlotResult[]; emptyReason: SlotEmptyReason }> {
     // 1. پیدا کردن business از slug
     const business = await this.prisma.business.findUnique({
       where: { slug: businessSlug },
@@ -66,8 +92,9 @@ export class SlotsService {
       throw new BadRequestException('این کارمند این خدمت را ارائه نمی‌دهد');
     }
 
-    // 5. تبدیل تاریخ string به Date و محاسبه dayOfWeek
-    const targetDate = new Date(dateString);
+    // 5. تبدیل تاریخ string به Date با UTC helper
+    // ⚠️ CRITICAL: استفاده از parseISOtoUTC برای جلوگیری از timezone drift ایران
+    const targetDate = parseISOtoUTC(dateString);
     if (isNaN(targetDate.getTime())) {
       throw new BadRequestException('تاریخ نامعتبر است');
     }
@@ -75,7 +102,7 @@ export class SlotsService {
     // محاسبه dayOfWeek با فرمت ایران (شنبه=0, یکشنبه=1, ..., جمعه=6)
     // JavaScript: Sunday=0, Monday=1, ..., Saturday=6
     // Iran: Saturday=0, Sunday=1, ..., Friday=6
-    const jsDayOfWeek = targetDate.getDay();
+    const jsDayOfWeek = targetDate.getUTCDay();
     const iranDayOfWeek = (jsDayOfWeek + 1) % 7;
 
     // 6. گرفتن ساعات کاری برای این روز هفته
@@ -88,15 +115,24 @@ export class SlotsService {
 
     if (!businessHour) {
       // این روز تعطیل است (ساعت کاری تعریف نشده)
-      return [];
+      return { slots: [], emptyReason: 'WEEKLY_CLOSED' };
     }
 
     // 7. چک کردن تعطیلات رسمی
-    const startOfDay = new Date(targetDate);
-    startOfDay.setHours(0, 0, 0, 0);
+    // ⚠️ CRITICAL: استفاده از UTC برای جلوگیری از overlap با روزهای مجاور
+    const startOfDay = new Date(Date.UTC(
+      targetDate.getUTCFullYear(),
+      targetDate.getUTCMonth(),
+      targetDate.getUTCDate(),
+      0, 0, 0, 0,
+    ));
 
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    const endOfDay = new Date(Date.UTC(
+      targetDate.getUTCFullYear(),
+      targetDate.getUTCMonth(),
+      targetDate.getUTCDate(),
+      23, 59, 59, 999,
+    ));
 
     const holiday = await this.prisma.holiday.findFirst({
       where: {
@@ -110,7 +146,7 @@ export class SlotsService {
 
     if (holiday) {
       // این روز تعطیل رسمی است
-      return [];
+      return { slots: [], emptyReason: 'HOLIDAY' };
     }
 
     // 8. گرفتن همه bookings این staff در این روز (غیر از CANCELLED)
@@ -139,10 +175,19 @@ export class SlotsService {
       businessHour.closeTime,
       durationMinutes,
       existingBookings,
-      targetDate,
+      dateString,
     );
 
-    return slots;
+    // دلیل خالی بودن: برای پیام دقیق در فرانت‌اند
+    let emptyReason: SlotEmptyReason = null;
+    if (slots.length === 0) {
+      // مقایسه تاریخ (نه ساعت) — اگر targetDate با امروز محلی برابر باشد
+      const todayIso = getLocalTodayISO();
+      const isToday = dateString === todayIso;
+      emptyReason = isToday ? 'PAST' : 'FULL';
+    }
+
+    return { slots, emptyReason };
   }
 
   /**
@@ -153,21 +198,24 @@ export class SlotsService {
     closeTime: string,
     durationMinutes: number,
     existingBookings: Array<{ startTime: Date; endTime: Date }>,
-    targetDate: Date,
+    targetDateIso: string,
   ): SlotResult[] {
     const slots: SlotResult[] = [];
 
     const openMinutes = this.timeToMinutes(openTime);
     const closeMinutes = this.timeToMinutes(closeTime);
 
-    const now = new Date();
-    const isToday =
-      targetDate.getFullYear() === now.getFullYear() &&
-      targetDate.getMonth() === now.getMonth() &&
-      targetDate.getDate() === now.getDate();
+    // امروز بودن: مقایسه ISO string با today محلی
+    const todayIso = getLocalTodayISO();
+    const isToday = targetDateIso === todayIso;
 
-    // فاصله بین slot ها: 30 دقیقه یا duration (هر کدام کوچکتر)
-    const intervalMinutes = Math.min(30, durationMinutes);
+    // فاصله بین slot ها = duration خدمت (مدل Fresha/Booksy)
+    // این باعث می‌شه خدمت ۴۰ دقیقه‌ای slot های ۴۰ دقیقه‌ای داشته باشه
+    // (مثلاً ۱۶:۱۰، ۱۶:۵۰، ۱۷:۳۰) بدون gap و بدون overlap ریاضی
+    const intervalMinutes = durationMinutes;
+
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
     for (
       let currentMinute = openMinutes;
@@ -179,7 +227,6 @@ export class SlotsService {
 
       // چک 1: اگر امروز است، آیا این slot در گذشته نیست؟
       if (isToday) {
-        const nowMinutes = now.getHours() * 60 + now.getMinutes();
         if (slotStartTime <= nowMinutes) {
           continue;
         }
@@ -187,13 +234,19 @@ export class SlotsService {
 
       // چک 2: آیا با هیچ booking موجودی overlap ندارد؟
       const hasOverlap = existingBookings.some((booking) => {
+        // تبدیل به دقیقه از نیمه‌شب — با UTC برای consistency
         const bookingStartMinutes =
-          booking.startTime.getHours() * 60 + booking.startTime.getMinutes();
+          booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes();
         const bookingEndMinutes =
-          booking.endTime.getHours() * 60 + booking.endTime.getMinutes();
+          booking.endTime.getUTCHours() * 60 + booking.endTime.getUTCMinutes();
+
+        // اگر endTime در روز بعد است (مثلاً رزرو ۲۳:۳۰ تا ۰۰:۳۰)
+        const adjustedEnd = bookingEndMinutes < bookingStartMinutes
+          ? bookingEndMinutes + 24 * 60
+          : bookingEndMinutes;
 
         // قانون overlap: A.startTime < B.endTime AND A.endTime > B.startTime
-        return slotStartTime < bookingEndMinutes && slotEndTime > bookingStartMinutes;
+        return slotStartTime < adjustedEnd && slotEndTime > bookingStartMinutes;
       });
 
       if (!hasOverlap) {
@@ -223,7 +276,8 @@ export class SlotsService {
     const mins = minutes % 60;
     return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
   }
-    /**
+
+  /**
    * پیدا کردن نزدیک‌ترین روز دارای اسلات خالی در ۶۰ روز آینده
    * برای auto-select در فرانت‌اند استفاده می‌شود
    */
@@ -258,23 +312,22 @@ export class SlotsService {
       throw new BadRequestException('این کارمند این خدمت را ارائه نمی‌دهد');
     }
 
-    const now = new Date();
-    const today = new Date(now);
-    today.setHours(0, 0, 0, 0);
+    // اسکن ۶۰ روز از امروز محلی
+    const todayIso = getLocalTodayISO();
+    const todayDate = parseISOtoUTC(todayIso);
 
-    // اسکن ۶۰ روز
     for (let offset = 0; offset < 60; offset++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() + offset);
+      const cursor = new Date(todayDate);
+      cursor.setUTCDate(cursor.getUTCDate() + offset);
+      const dateStr = toUTCISO(cursor);
 
-      const dateStr = date.toISOString().split('T')[0];
-      const slots = await this.getAvailableSlots(businessSlug, serviceId, staffId, dateStr);
+      const result = await this.getAvailableSlots(businessSlug, serviceId, staffId, dateStr);
 
-      if (slots.length > 0) {
+      if (result.slots.length > 0) {
         return {
           date: dateStr,
-          slotsCount: slots.length,
-          firstSlot: slots[0],
+          slotsCount: result.slots.length,
+          firstSlot: result.slots[0],
         };
       }
     }
