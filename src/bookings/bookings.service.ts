@@ -15,6 +15,26 @@ import { BusinessesService } from '../businesses/businesses.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { BookingStatus, PaymentMethod } from '@prisma/client';
 
+// ──── UTC Date Helpers (جلوگیری از timezone drift ایران) ────
+// چرا؟ new Date('2026-09-15') در ایران می‌شود 2026-09-14T20:30:00Z (یک روز قبل)
+// این helper ها تاریخ را دقیقاً همان روزی که کاربر گفته می‌سازند
+const parseISOtoUTC = (iso: string): Date => {
+  // اگر ISO کامل با ساعت باشد (مثل 2026-09-15T14:00:00)، آن را parse می‌کنیم
+  if (iso.includes('T')) {
+    return new Date(iso);
+  }
+  // اگر فقط date باشد (مثل 2026-09-15)، UTC midnight می‌سازیم
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+};
+
+const toUTCISO = (d: Date): string => {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 /**
  * قوانین تغییر وضعیت رزرو
  * کدام وضعیت‌ها می‌توانند به کدام وضعیت‌ها تغییر کنند
@@ -89,6 +109,7 @@ export class BookingsService {
     }
 
     // 5. اعتبارسنجی تاریخ و زمان
+    // dto.startTime فرمت: 2026-09-15T14:00:00 (ISO datetime با ساعت)
     const startTime = new Date(dto.startTime);
     if (isNaN(startTime.getTime())) {
       throw new BadRequestException('تاریخ و ساعت نامعتبر است');
@@ -106,10 +127,8 @@ export class BookingsService {
     );
 
     // 6. چک کردن ساعات کاری برای آن روز
-    const bookingDate = new Date(startTime);
-    bookingDate.setHours(0, 0, 0, 0);
-
-    const jsDayOfWeek = startTime.getDay();
+    // ⚠️ CRITICAL: استفاده از UTC برای dayOfWeek و date-only calculations
+    const jsDayOfWeek = startTime.getUTCDay();
     const iranDayOfWeek = (jsDayOfWeek + 1) % 7;
 
     const businessHour = await this.prisma.businessHour.findFirst({
@@ -124,8 +143,8 @@ export class BookingsService {
     }
 
     // چک کنیم ساعت رزرو در محدوده ساعات کاری باشد
-    const slotStartMinutes = startTime.getHours() * 60 + startTime.getMinutes();
-    const slotEndMinutes = endTime.getHours() * 60 + endTime.getMinutes();
+    const slotStartMinutes = startTime.getUTCHours() * 60 + startTime.getUTCMinutes();
+    const slotEndMinutes = endTime.getUTCHours() * 60 + endTime.getUTCMinutes();
     const openMinutes = this.timeToMinutes(businessHour.openTime);
     const closeMinutes = this.timeToMinutes(businessHour.closeTime);
 
@@ -136,11 +155,20 @@ export class BookingsService {
     }
 
     // 7. چک کردن تعطیلات
-    const startOfDay = new Date(startTime);
-    startOfDay.setHours(0, 0, 0, 0);
+    // ⚠️ CRITICAL: استفاده از UTC برای جلوگیری از overlap با روزهای مجاور
+    const startOfDay = new Date(Date.UTC(
+      startTime.getUTCFullYear(),
+      startTime.getUTCMonth(),
+      startTime.getUTCDate(),
+      0, 0, 0, 0,
+    ));
 
-    const endOfDay = new Date(startTime);
-    endOfDay.setHours(23, 59, 59, 999);
+    const endOfDay = new Date(Date.UTC(
+      startTime.getUTCFullYear(),
+      startTime.getUTCMonth(),
+      startTime.getUTCDate(),
+      23, 59, 59, 999,
+    ));
 
     const holiday = await this.prisma.holiday.findFirst({
       where: {
@@ -264,11 +292,12 @@ export class BookingsService {
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const from = query?.from ? new Date(query.from) : defaultFrom;
-    const to = query?.to ? new Date(query.to) : now;
+    // ⚠️ CRITICAL: استفاده از parseISOtoUTC برای date-only strings
+    const from = query?.from ? parseISOtoUTC(query.from) : defaultFrom;
+    const to = query?.to ? parseISOtoUTC(query.to) : now;
 
     // to رو تا پایان روز ببریم (23:59:59)
-    to.setHours(23, 59, 59, 999);
+    to.setUTCHours(23, 59, 59, 999);
 
     // اعتبارسنجی بازه حداکثر ۳۱ روز
     const dayDiff = Math.ceil(
@@ -753,9 +782,10 @@ export class BookingsService {
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const from = query?.from ? new Date(query.from) : defaultFrom;
-    const to = query?.to ? new Date(query.to) : now;
-    to.setHours(23, 59, 59, 999);
+    // ⚠️ CRITICAL: استفاده از parseISOtoUTC برای date-only strings
+    const from = query?.from ? parseISOtoUTC(query.from) : defaultFrom;
+    const to = query?.to ? parseISOtoUTC(query.to) : now;
+    to.setUTCHours(23, 59, 59, 999);
 
     // اعتبارسنجی بازه حداکثر ۳۶۵ روز
     const dayDiff = Math.ceil(
@@ -787,7 +817,7 @@ export class BookingsService {
       WHERE b."businessId" = ANY(${businessIds})
         AND b.status = 'COMPLETED'
         AND b."startTime" >= ${from}
-        AND b."startTime" <= ${to}
+          AND b."startTime" <= ${to}
       GROUP BY b."businessId"
     `;
 
