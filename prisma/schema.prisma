@@ -151,6 +151,7 @@ model Staff {
 
   services StaffService[]
   bookings Booking[]
+  breaks   StaffBreak[]
 
   @@map("staff")
 }
@@ -321,4 +322,19 @@ model ReviewReply {
   review     BusinessReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 
   @@map("review_replies")
+}
+// ═══════════════════════════════════════════════════════════════
+// NEW: بازه‌های غیرقابل رزرو در سطح هر کارمند (تکرارشونده هفتگی)
+// ═══════════════════════════════════════════════════════════════
+model StaffBreak {
+  id        String   @id @default(uuid())
+  staffId   String
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  dayOfWeek Int      // 0=Saturday ... 6=Friday (Iran week)
+  startTime String   // HH:MM format (وقت محلی)
+  endTime   String   // HH:MM format (وقت محلی)
+  createdAt DateTime @default(now())
+
+  @@index([staffId, dayOfWeek])
+  @@map("staff_breaks")
 }

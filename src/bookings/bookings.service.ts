@@ -127,8 +127,10 @@ export class BookingsService {
     );
 
     // 6. چک کردن ساعات کاری برای آن روز
-    // ⚠️ CRITICAL: استفاده از UTC برای dayOfWeek و date-only calculations
-    const jsDayOfWeek = startTime.getUTCDay();
+    // ⚠️ CRITICAL: روز هفته و ساعت‌ها باید LOCAL باشند، چون dto.startTime بدون
+    // timezone parse می‌شود (یعنی ساعت دیواری محلی) و openTime/closeTime و
+    // break ها همگی رشته‌های HH:MM دیواری محلی هستند.
+    const jsDayOfWeek = startTime.getDay();
     const iranDayOfWeek = (jsDayOfWeek + 1) % 7;
 
     const businessHour = await this.prisma.businessHour.findFirst({
@@ -143,8 +145,9 @@ export class BookingsService {
     }
 
     // چک کنیم ساعت رزرو در محدوده ساعات کاری باشد
-    const slotStartMinutes = startTime.getUTCHours() * 60 + startTime.getUTCMinutes();
-    const slotEndMinutes = endTime.getUTCHours() * 60 + endTime.getUTCMinutes();
+    // ⚠️ CRITICAL: ساعت دیواری LOCAL (ساعات کاری HH:MM محلی‌ان)
+    const slotStartMinutes = startTime.getHours() * 60 + startTime.getMinutes();
+    const slotEndMinutes = endTime.getHours() * 60 + endTime.getMinutes();
     const openMinutes = this.timeToMinutes(businessHour.openTime);
     const closeMinutes = this.timeToMinutes(businessHour.closeTime);
 
@@ -155,27 +158,34 @@ export class BookingsService {
     }
 
     // 7. چک کردن تعطیلات
-    // ⚠️ CRITICAL: استفاده از UTC برای جلوگیری از overlap با روزهای مجاور
-    const startOfDay = new Date(Date.UTC(
-      startTime.getUTCFullYear(),
-      startTime.getUTCMonth(),
-      startTime.getUTCDate(),
-      0, 0, 0, 0,
-    ));
+    // ⚠️ CRITICAL: ستون Holiday.date از نوع @db.Date است و Prisma بخش تاریخِ UTCِ
+    // پارامتر DateTime را مقایسه می‌کند. پس پنجره باید «روز UTCِ تاریخ دیواری» باشد.
+    // اگر midnight محلی بسازیم (setHours)، در ایران به ساعت ۲۰:۳۰ روز قبل UTC
+    // می‌افتد و تعطیلی روز قبل اشتباهاً روز جاری را بلاک می‌کند.
+    const wallStartOfDay = new Date(
+      Date.UTC(
+        startTime.getFullYear(),
+        startTime.getMonth(),
+        startTime.getDate(),
+        0, 0, 0, 0,
+      ),
+    );
 
-    const endOfDay = new Date(Date.UTC(
-      startTime.getUTCFullYear(),
-      startTime.getUTCMonth(),
-      startTime.getUTCDate(),
-      23, 59, 59, 999,
-    ));
+    const wallEndOfDay = new Date(
+      Date.UTC(
+        startTime.getFullYear(),
+        startTime.getMonth(),
+        startTime.getDate(),
+        23, 59, 59, 999,
+      ),
+    );
 
     const holiday = await this.prisma.holiday.findFirst({
       where: {
         businessId: dto.businessId,
         date: {
-          gte: startOfDay,
-          lte: endOfDay,
+          gte: wallStartOfDay,
+          lte: wallEndOfDay,
         },
       },
     });
@@ -184,7 +194,36 @@ export class BookingsService {
       throw new BadRequestException('این تاریخ تعطیل رسمی کسب‌وکار است');
     }
 
-    // 8. ایجاد رزرو در transaction برای جلوگیری از race condition
+    // 8. چک بازه‌های غیرقابل رزرو کارمند (defense in depth)
+    // حتی اگر مشتری مستقیماً API را صدا بزند (با Postman/curl) و startTime
+    // جعلی بفرستد، باز هم reject می‌شود.
+    // قانون overlap: slotStart < breakEnd AND slotEnd > breakStart
+    const staffBreaks = await this.prisma.staffBreak.findMany({
+      where: {
+        staffId: dto.staffId,
+        dayOfWeek: iranDayOfWeek,
+      },
+      select: {
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    if (staffBreaks.length > 0) {
+      const overlapsBreak = staffBreaks.some((brk) => {
+        const brkStart = this.timeToMinutes(brk.startTime);
+        const brkEnd = this.timeToMinutes(brk.endTime);
+        return slotStartMinutes < brkEnd && slotEndMinutes > brkStart;
+      });
+
+      if (overlapsBreak) {
+        throw new BadRequestException(
+          'این کارمند در زمان انتخاب‌شده حضور ندارد. لطفاً زمان دیگری را انتخاب کنید',
+        );
+      }
+    }
+
+    // 9. ایجاد رزرو در transaction برای جلوگیری از race condition
     try {
       const booking = await this.prisma.$transaction(
         async (tx) => {
@@ -292,12 +331,11 @@ export class BookingsService {
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    // ⚠️ CRITICAL: استفاده از parseISOtoUTC برای date-only strings
     const from = query?.from ? parseISOtoUTC(query.from) : defaultFrom;
     const to = query?.to ? parseISOtoUTC(query.to) : now;
 
     // to رو تا پایان روز ببریم (23:59:59)
-    to.setUTCHours(23, 59, 59, 999);
+    to.setHours(23, 59, 59, 999);
 
     // اعتبارسنجی بازه حداکثر ۳۱ روز
     const dayDiff = Math.ceil(
@@ -782,10 +820,9 @@ export class BookingsService {
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    // ⚠️ CRITICAL: استفاده از parseISOtoUTC برای date-only strings
     const from = query?.from ? parseISOtoUTC(query.from) : defaultFrom;
     const to = query?.to ? parseISOtoUTC(query.to) : now;
-    to.setUTCHours(23, 59, 59, 999);
+    to.setHours(23, 59, 59, 999);
 
     // اعتبارسنجی بازه حداکثر ۳۶۵ روز
     const dayDiff = Math.ceil(
@@ -817,7 +854,7 @@ export class BookingsService {
       WHERE b."businessId" = ANY(${businessIds})
         AND b.status = 'COMPLETED'
         AND b."startTime" >= ${from}
-          AND b."startTime" <= ${to}
+        AND b."startTime" <= ${to}
       GROUP BY b."businessId"
     `;
 

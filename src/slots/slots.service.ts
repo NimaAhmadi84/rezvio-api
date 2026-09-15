@@ -38,6 +38,14 @@ export class SlotsService {
 
   /**
    * محاسبه slot های آزاد برای یک business/service/staff/date
+   *
+   * الگوریتم:
+   * 1. validation های business/service/staff/M2M
+   * 2. چک ساعات کاری کسب‌وکار
+   * 3. چک تعطیلات رسمی کسب‌وکار
+   * 4. چک بازه‌های غیرقابل رزرو کارمند (StaffBreak)
+   * 5. چک رزروهای موجود (overlap)
+   * 6. تولید slot های آزاد
    */
   async getAvailableSlots(
     businessSlug: string,
@@ -118,7 +126,7 @@ export class SlotsService {
       return { slots: [], emptyReason: 'WEEKLY_CLOSED' };
     }
 
-    // 7. چک کردن تعطیلات رسمی
+    // 7. چک کردن تعطیلات رسمی کسب‌وکار
     // ⚠️ CRITICAL: استفاده از UTC برای جلوگیری از overlap با روزهای مجاور
     const startOfDay = new Date(Date.UTC(
       targetDate.getUTCFullYear(),
@@ -149,14 +157,25 @@ export class SlotsService {
       return { slots: [], emptyReason: 'HOLIDAY' };
     }
 
-    // 8. گرفتن همه bookings این staff در این روز (غیر از CANCELLED)
+    // 8. گرفتن breaks این کارمند برای این روز هفته
+    // بازه‌هایی که کارمند در آن ساعات حضور ندارد (ناهار شخصی، استراحت و...)
+    const staffBreaks = await this.prisma.staffBreak.findMany({
+      where: {
+        staffId,
+        dayOfWeek: iranDayOfWeek,
+      },
+      select: {
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    // 9. گرفتن رزروهای موجود این staff در این روز
     const existingBookings = await this.prisma.booking.findMany({
       where: {
+        staffId,
         businessId: business.id,
-        staffId: staffId,
-        status: {
-          not: 'CANCELLED',
-        },
+        status: { not: 'CANCELLED' },
         startTime: {
           gte: startOfDay,
           lte: endOfDay,
@@ -168,7 +187,7 @@ export class SlotsService {
       },
     });
 
-    // 9. تولید slot های ممکن
+    // 10. ساخت slot های آزاد (با فیلتر staff breaks + existing bookings)
     const durationMinutes = service.durationMinutes;
     const slots = this.generateSlots(
       businessHour.openTime,
@@ -176,6 +195,7 @@ export class SlotsService {
       durationMinutes,
       existingBookings,
       dateString,
+      staffBreaks,
     );
 
     // دلیل خالی بودن: برای پیام دقیق در فرانت‌اند
@@ -191,7 +211,10 @@ export class SlotsService {
   }
 
   /**
-   * تولید slot های آزاد با توجه به ساعات کاری و bookings موجود
+   * تولید slot های آزاد با فیلتر کردن:
+   * - زمان‌های گذشته (اگر امروز است)
+   * - رزروهای موجود (overlap)
+   * - بازه‌های غیرقابل رزرو کارمند (overlap)
    */
   private generateSlots(
     openTime: string,
@@ -199,6 +222,7 @@ export class SlotsService {
     durationMinutes: number,
     existingBookings: Array<{ startTime: Date; endTime: Date }>,
     targetDateIso: string,
+    staffBreaks: Array<{ startTime: string; endTime: string }> = [],
   ): SlotResult[] {
     const slots: SlotResult[] = [];
 
@@ -217,6 +241,13 @@ export class SlotsService {
     const now = new Date();
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
+    // ──── تبدیل staff breaks به دقیقه از نیمه‌شب ────
+    // زمان‌ها به صورت HH:MM محلی ذخیره شده‌اند و با ساعت دیواری قابل مقایسه‌اند
+    const breaksInMinutes = staffBreaks.map((brk) => ({
+      start: this.timeToMinutes(brk.startTime),
+      end: this.timeToMinutes(brk.endTime),
+    }));
+
     for (
       let currentMinute = openMinutes;
       currentMinute + durationMinutes <= closeMinutes;
@@ -233,7 +264,7 @@ export class SlotsService {
       }
 
       // چک 2: آیا با هیچ booking موجودی overlap ندارد؟
-      const hasOverlap = existingBookings.some((booking) => {
+      const hasBookingOverlap = existingBookings.some((booking) => {
         // تبدیل به دقیقه از نیمه‌شب — با UTC برای consistency
         const bookingStartMinutes =
           booking.startTime.getUTCHours() * 60 + booking.startTime.getUTCMinutes();
@@ -249,12 +280,23 @@ export class SlotsService {
         return slotStartTime < adjustedEnd && slotEndTime > bookingStartMinutes;
       });
 
-      if (!hasOverlap) {
-        slots.push({
-          startTime: this.minutesToTime(slotStartTime),
-          endTime: this.minutesToTime(slotEndTime),
-        });
+      if (hasBookingOverlap) {
+        continue;
       }
+
+      // چک 3: آیا با هیچ break کارمندی overlap ندارد؟
+      const hasStaffBreakOverlap = breaksInMinutes.some((brk) => {
+        return slotStartTime < brk.end && slotEndTime > brk.start;
+      });
+
+      if (hasStaffBreakOverlap) {
+        continue;
+      }
+
+      slots.push({
+        startTime: this.minutesToTime(slotStartTime),
+        endTime: this.minutesToTime(slotEndTime),
+      });
     }
 
     return slots;

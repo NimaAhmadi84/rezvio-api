@@ -13,6 +13,7 @@ import { BusinessesModule } from './businesses/businesses.module';
 import { ServicesModule } from './services/services.module';
 import { StaffModule } from './staff/staff.module';
 import { AvailabilityModule } from './availability/availability.module';
+import { StaffBreaksModule } from './staff-breaks/staff-breaks.module';
 import { SlotsModule } from './slots/slots.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { EmailModule } from './email/email.module';
@@ -55,6 +56,7 @@ import { BusinessReviewsModule } from './business-reviews/business-reviews.modul
     ServicesModule,
     StaffModule,
     AvailabilityModule,
+    StaffBreaksModule,
     SlotsModule,
     BookingsModule,
     EmailModule,
