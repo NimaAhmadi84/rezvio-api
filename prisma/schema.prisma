@@ -37,18 +37,18 @@ enum ReviewVoteKind {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String?   @unique
-  phone     String?  @unique
-  password  String?
-  name      String?
+  id         String   @id @default(uuid())
+  email      String?  @unique
+  phone      String?  @unique
+  password   String?
+  name       String?
   role       UserRole @default(CUSTOMER)
   nationalId String?  @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  ownedBusinesses Business[] @relation("BusinessOwner")
-  bookings        Booking[]  @relation("CustomerBookings")
+  ownedBusinesses Business[]       @relation("BusinessOwner")
+  bookings        Booking[]        @relation("CustomerBookings")
   businessLikes   BusinessLike[]
   reviews         BusinessReview[]
   reviewVotes     ReviewVote[]
@@ -57,13 +57,13 @@ model User {
 }
 
 model Category {
-  id        String     @id @default(uuid())
-  name      String     @unique
-  slug      String     @unique
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
   icon      String?
-  sortOrder Int        @default(0)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   businesses Business[]
 
@@ -81,59 +81,58 @@ model Business {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  description String?  @db.Text
+  description String? @db.Text
   logoUrl     String?
 
   // ──── Location (Phase 18) ────
-  province    String?
-  city        String?
-  latitude    Float?
-  longitude   Float?
-  mapLink     String?  @db.Text
+  province  String?
+  city      String?
+  latitude  Float?
+  longitude Float?
+  mapLink   String? @db.Text
 
   // ──── Social Media (Phase 18) ────
   socialMedia Json?
 
   // ──── Gallery Images ────
-  images      BusinessImage[]
+  images BusinessImage[]
 
   // ──── Foundation (Phase 15) ────
-  categoryId   String?
-  category     Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  viewsCount   Int       @default(0)
-  bookingsCount Int      @default(0)
+  categoryId    String?
+  category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  viewsCount    Int       @default(0)
+  bookingsCount Int       @default(0)
 
   // ═══════════════════════════════════════════════════════════════
   // NEW: شمارنده لایک صفحه (برای نمایش سریع بدون COUNT join)
   // ═══════════════════════════════════════════════════════════════
-  likesCount   Int       @default(0)
+  likesCount Int @default(0)
 
-  staff          Staff[]
-  services       Service[]
-  bookings       Booking[]
-  businessHours  BusinessHour[]
-  holidays       Holiday[]
-  likes          BusinessLike[]
-  reviews        BusinessReview[]
+  staff         Staff[]
+  services      Service[]
+  bookings      Booking[]
+  businessHours BusinessHour[]
+  holidays      Holiday[]
+  likes         BusinessLike[]
+  reviews       BusinessReview[]
 
   @@index([categoryId])
   @@index([viewsCount])
   @@index([bookingsCount])
   @@index([likesCount])
   @@index([createdAt])
-
   @@map("businesses")
 }
 
 model BusinessImage {
-  id          String   @id @default(uuid())
-  url         String
-  caption     String?
-  sortOrder   Int      @default(0)
-  businessId  String
-  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  url        String
+  caption    String?
+  sortOrder  Int      @default(0)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@index([businessId, sortOrder])
   @@map("business_images")
@@ -149,9 +148,10 @@ model Staff {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  services StaffService[]
-  bookings Booking[]
-  breaks   StaffBreak[]
+  services   StaffService[]
+  bookings   Booking[]
+  breaks     StaffBreak[]
+  dateBreaks StaffDateBreak[] // ← این خط را
 
   @@map("staff")
 }
@@ -208,29 +208,29 @@ model Holiday {
 }
 
 model Booking {
-  id         String        @id @default(uuid())
-  businessId String
-  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  customerId String
-  customer   User          @relation("CustomerBookings", fields: [customerId], references: [id])
-  staffId    String?
-  staff      Staff?        @relation(fields: [staffId], references: [id])
-  serviceId  String?
-  service    Service?      @relation(fields: [serviceId], references: [id])
-  startTime  DateTime
-  endTime    DateTime
-  status              BookingStatus @default(PENDING)
-  notes               String?
-  cancellationReason  String?       // علت لغو توسط مشتری (حداقل ۱۰ کاراکتر)
-  cancelledAt         DateTime?     // زمان لغو (برای analytics)
+  id                 String        @id @default(uuid())
+  businessId         String
+  business           Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customerId         String
+  customer           User          @relation("CustomerBookings", fields: [customerId], references: [id])
+  staffId            String?
+  staff              Staff?        @relation(fields: [staffId], references: [id])
+  serviceId          String?
+  service            Service?      @relation(fields: [serviceId], references: [id])
+  startTime          DateTime
+  endTime            DateTime
+  status             BookingStatus @default(PENDING)
+  notes              String?
+  cancellationReason String? // علت لغو توسط مشتری (حداقل ۱۰ کاراکتر)
+  cancelledAt        DateTime? // زمان لغو (برای analytics)
 
   // ═══════════════════════════════════════════════════════════════
   // NEW: روش پرداخت (IN_PERSON default برای backwards compatibility)
   // ═══════════════════════════════════════════════════════════════
   paymentMethod PaymentMethod @default(IN_PERSON)
 
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([businessId, startTime])
   @@index([staffId, startTime])
@@ -242,8 +242,8 @@ model Booking {
 
 model OtpCode {
   id         String   @id @default(uuid())
-  identifier String   // email یا شماره تماس
-  code       String   // کد ۶ رقمی
+  identifier String // email یا شماره تماس
+  code       String // کد ۶ رقمی
   attempts   Int      @default(0)
   verified   Boolean  @default(false)
   expiresAt  DateTime
@@ -279,13 +279,13 @@ model BusinessReview {
   userId     String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rating     Int      // 1..5
+  rating     Int // 1..5
   text       String   @db.Text
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  votes      ReviewVote[]
-  replies    ReviewReply[]
+  votes   ReviewVote[]
+  replies ReviewReply[]
 
   @@index([userId, businessId]) // نظر چندگانه per user مجاز است
   @@index([businessId, createdAt])
@@ -297,13 +297,13 @@ model BusinessReview {
 // NEW: رأی مفید / مفید نبود روی نظر (یک رأی per user per review)
 // ═══════════════════════════════════════════════════════════════
 model ReviewVote {
-  id         String         @id @default(uuid())
-  reviewId   String
-  userId     String
-  kind       ReviewVoteKind
-  review     BusinessReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt  DateTime       @default(now())
+  id        String         @id @default(uuid())
+  reviewId  String
+  userId    String
+  kind      ReviewVoteKind
+  review    BusinessReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
 
   @@unique([userId, reviewId])
   @@index([reviewId])
@@ -314,15 +314,16 @@ model ReviewVote {
 // NEW: پاسخ صاحب کسب‌وکار به نظر (یک پاسخ per review)
 // ═══════════════════════════════════════════════════════════════
 model ReviewReply {
-  id         String         @id @default(uuid())
-  reviewId   String         @unique
-  text       String         @db.Text
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-  review     BusinessReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  id        String         @id @default(uuid())
+  reviewId  String         @unique
+  text      String         @db.Text
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  review    BusinessReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 
   @@map("review_replies")
 }
+
 // ═══════════════════════════════════════════════════════════════
 // NEW: بازه‌های غیرقابل رزرو در سطح هر کارمند (تکرارشونده هفتگی)
 // ═══════════════════════════════════════════════════════════════
@@ -330,11 +331,29 @@ model StaffBreak {
   id        String   @id @default(uuid())
   staffId   String
   staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  dayOfWeek Int      // 0=Saturday ... 6=Friday (Iran week)
-  startTime String   // HH:MM format (وقت محلی)
-  endTime   String   // HH:MM format (وقت محلی)
+  dayOfWeek Int // 0=Saturday ... 6=Friday (Iran week)
+  startTime String // HH:MM format (وقت محلی)
+  endTime   String // HH:MM format (وقت محلی)
   createdAt DateTime @default(now())
 
   @@index([staffId, dayOfWeek])
   @@map("staff_breaks")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NEW: غیبت موردی کارمند در یک تاریخ خاص (جدا از الگوی هفتگی)
+// مثال: «پس‌فردا ۱۰ تا ۱۱ باید بره بانک» — فقط همان روز بسته می‌شود
+// ═══════════════════════════════════════════════════════════════
+model StaffDateBreak {
+  id        String   @id @default(uuid())
+  staffId   String
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  date      DateTime @db.Date // تاریخ روز غیبت (wall date)
+  startTime String // HH:MM
+  endTime   String // HH:MM
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([staffId, date])
+  @@map("staff_date_breaks")
 }

@@ -16,14 +16,10 @@ import { AvailabilityService } from '../availability/availability.service';
 import { BookingStatus, PaymentMethod } from '@prisma/client';
 
 // ──── UTC Date Helpers (جلوگیری از timezone drift ایران) ────
-// چرا؟ new Date('2026-09-15') در ایران می‌شود 2026-09-14T20:30:00Z (یک روز قبل)
-// این helper ها تاریخ را دقیقاً همان روزی که کاربر گفته می‌سازند
 const parseISOtoUTC = (iso: string): Date => {
-  // اگر ISO کامل با ساعت باشد (مثل 2026-09-15T14:00:00)، آن را parse می‌کنیم
   if (iso.includes('T')) {
     return new Date(iso);
   }
-  // اگر فقط date باشد (مثل 2026-09-15)، UTC midnight می‌سازیم
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
 };
@@ -37,7 +33,6 @@ const toUTCISO = (d: Date): string => {
 
 /**
  * قوانین تغییر وضعیت رزرو
- * کدام وضعیت‌ها می‌توانند به کدام وضعیت‌ها تغییر کنند
  */
 const STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
   [BookingStatus.PENDING]: [BookingStatus.CONFIRMED, BookingStatus.CANCELLED],
@@ -58,7 +53,6 @@ export class BookingsService {
 
   /**
    * ساخت رزرو جدید با جلوگیری از double-booking
-   * این متد از transaction استفاده می‌کند تا race condition رو مدیریت کنه
    */
   async create(userId: string, dto: CreateBookingDto) {
     // 1. اعتبارسنجی business وجود داره
@@ -109,27 +103,21 @@ export class BookingsService {
     }
 
     // 5. اعتبارسنجی تاریخ و زمان
-    // dto.startTime فرمت: 2026-09-15T14:00:00 (ISO datetime با ساعت)
     const startTime = new Date(dto.startTime);
     if (isNaN(startTime.getTime())) {
       throw new BadRequestException('تاریخ و ساعت نامعتبر است');
     }
 
-    // چک کنیم در گذشته نباشد
     const now = new Date();
     if (startTime <= now) {
       throw new BadRequestException('زمان رزرو نمی‌تواند در گذشته باشد');
     }
 
-    // محاسبه endTime بر اساس duration خدمت
     const endTime = new Date(
       startTime.getTime() + service.durationMinutes * 60 * 1000,
     );
 
-    // 6. چک کردن ساعات کاری برای آن روز
-    // ⚠️ CRITICAL: روز هفته و ساعت‌ها باید LOCAL باشند، چون dto.startTime بدون
-    // timezone parse می‌شود (یعنی ساعت دیواری محلی) و openTime/closeTime و
-    // break ها همگی رشته‌های HH:MM دیواری محلی هستند.
+    // 6. چک کردن ساعات کاری برای آن روز (روز هفته و ساعت‌ها LOCAL)
     const jsDayOfWeek = startTime.getDay();
     const iranDayOfWeek = (jsDayOfWeek + 1) % 7;
 
@@ -144,8 +132,6 @@ export class BookingsService {
       throw new BadRequestException('این کسب‌وکار در این روز تعطیل است');
     }
 
-    // چک کنیم ساعت رزرو در محدوده ساعات کاری باشد
-    // ⚠️ CRITICAL: ساعت دیواری LOCAL (ساعات کاری HH:MM محلی‌ان)
     const slotStartMinutes = startTime.getHours() * 60 + startTime.getMinutes();
     const slotEndMinutes = endTime.getHours() * 60 + endTime.getMinutes();
     const openMinutes = this.timeToMinutes(businessHour.openTime);
@@ -157,11 +143,7 @@ export class BookingsService {
       );
     }
 
-    // 7. چک کردن تعطیلات
-    // ⚠️ CRITICAL: ستون Holiday.date از نوع @db.Date است و Prisma بخش تاریخِ UTCِ
-    // پارامتر DateTime را مقایسه می‌کند. پس پنجره باید «روز UTCِ تاریخ دیواری» باشد.
-    // اگر midnight محلی بسازیم (setHours)، در ایران به ساعت ۲۰:۳۰ روز قبل UTC
-    // می‌افتد و تعطیلی روز قبل اشتباهاً روز جاری را بلاک می‌کند.
+    // 7. چک کردن تعطیلات رسمی (پنجره = روز UTCِ تاریخ دیواری)
     const wallStartOfDay = new Date(
       Date.UTC(
         startTime.getFullYear(),
@@ -194,29 +176,29 @@ export class BookingsService {
       throw new BadRequestException('این تاریخ تعطیل رسمی کسب‌وکار است');
     }
 
-    // 8. چک بازه‌های غیرقابل رزرو کارمند (defense in depth)
-    // حتی اگر مشتری مستقیماً API را صدا بزند (با Postman/curl) و startTime
-    // جعلی بفرستد، باز هم reject می‌شود.
-    // قانون overlap: slotStart < breakEnd AND slotEnd > breakStart
-    const staffBreaks = await this.prisma.staffBreak.findMany({
-      where: {
-        staffId: dto.staffId,
-        dayOfWeek: iranDayOfWeek,
-      },
-      select: {
-        startTime: true,
-        endTime: true,
-      },
-    });
+    // 8. چک غیبت‌های کارمند (هفتگی + موردی) — defense in depth
+    // حتی اگر مشتری مستقیماً API را صدا بزند و startTime جعلی بفرستد، reject می‌شود
+    const [weeklyBreaks, dateBreaks] = await Promise.all([
+      this.prisma.staffBreak.findMany({
+        where: { staffId: dto.staffId, dayOfWeek: iranDayOfWeek },
+        select: { startTime: true, endTime: true },
+      }),
+      this.prisma.staffDateBreak.findMany({
+        where: { staffId: dto.staffId, date: wallStartOfDay },
+        select: { startTime: true, endTime: true },
+      }),
+    ]);
 
-    if (staffBreaks.length > 0) {
-      const overlapsBreak = staffBreaks.some((brk) => {
+    const staffAbsences = [...weeklyBreaks, ...dateBreaks];
+
+    if (staffAbsences.length > 0) {
+      const overlapsAbsence = staffAbsences.some((brk) => {
         const brkStart = this.timeToMinutes(brk.startTime);
         const brkEnd = this.timeToMinutes(brk.endTime);
         return slotStartMinutes < brkEnd && slotEndMinutes > brkStart;
       });
 
-      if (overlapsBreak) {
+      if (overlapsAbsence) {
         throw new BadRequestException(
           'این کارمند در زمان انتخاب‌شده حضور ندارد. لطفاً زمان دیگری را انتخاب کنید',
         );
@@ -312,32 +294,22 @@ export class BookingsService {
 
   /**
    * دریافت رزروهای کسب‌وکار با فیلتر + pagination + stats
-   *
-   * 🎯 منطق کسب‌وکار:
-   * - بازه زمانی حداکثر ۳۱ روز (برای جلوگیری از فشار سرور)
-   * - stats روی کل بازه محاسبه می‌شه (مستقل از صفحه فعلی)
-   * - درآمد = فقط COMPLETED (قانون ثبت‌شده کسب‌وکار)
-   * - search سمت سرور با ILIKE (case-insensitive) برای عملکرد بهتر
    */
   async findBusinessBookings(
     businessId: string,
     userId: string,
     query?: QueryBookingsDto,
   ) {
-    // ──── Step 1: بررسی مالکیت ────
     await this.businessesService.checkOwnership(businessId, userId);
 
-    // ──── Step 2: محاسبه بازه زمانی (default: ۳۰ روز گذشته) ────
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     const from = query?.from ? parseISOtoUTC(query.from) : defaultFrom;
     const to = query?.to ? parseISOtoUTC(query.to) : now;
 
-    // to رو تا پایان روز ببریم (23:59:59)
     to.setHours(23, 59, 59, 999);
 
-    // اعتبارسنجی بازه حداکثر ۳۱ روز
     const dayDiff = Math.ceil(
       (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24),
     );
@@ -350,7 +322,6 @@ export class BookingsService {
       throw new BadRequestException('تاریخ پایان باید بعد از تاریخ شروع باشد');
     }
 
-    // ──── Step 3: محاسبه stats روی کل بازه (مستقل از pagination) ────
     const statsWhere = {
       businessId,
       startTime: { gte: from, lte: to },
@@ -379,7 +350,6 @@ export class BookingsService {
       this.prisma.booking.count({
         where: { ...statsWhere, status: BookingStatus.NO_SHOW },
       }),
-      // 🎯 درآمد: فقط COMPLETED در بازه — raw SQL برای join با service
       this.prisma.$queryRaw<[{ total: number | null }]>`
         SELECT COALESCE(SUM(s.price), 0) as total
         FROM bookings b
@@ -400,13 +370,11 @@ export class BookingsService {
       totalRevenue: Number(revenueResult[0]?.total || 0),
     };
 
-    // ──── Step 4: ساخت where clause برای لیست (با فیلترها) ────
     const listWhere: any = {
       businessId,
       startTime: { gte: from, lte: to },
     };
 
-    // فیلتر وضعیت (ALL یعنی همه)
     const validStatuses = [
       'PENDING',
       'CONFIRMED',
@@ -418,7 +386,6 @@ export class BookingsService {
       listWhere.status = query.status;
     }
 
-    // جستجو در customer/service/staff/phone
     if (query?.q && query.q.trim()) {
       const q = query.q.trim();
       listWhere.OR = [
@@ -429,14 +396,12 @@ export class BookingsService {
       ];
     }
 
-    // ──── Step 5: Pagination ────
     const page = query?.page || 1;
     const limit = query?.limit || 20;
     const skip = (page - 1) * limit;
 
     const total = await this.prisma.booking.count({ where: listWhere });
 
-    // ──── Step 6: Query با include و sort ────
     const items = await this.prisma.booking.findMany({
       where: listWhere,
       include: {
@@ -468,7 +433,6 @@ export class BookingsService {
       take: limit,
     });
 
-    // ──── Step 7: ساخت meta ────
     const totalPages = Math.ceil(total / limit) || 1;
     const meta = {
       total,
@@ -702,18 +666,8 @@ export class BookingsService {
 
   /**
    * لغو رزرو با علت (فقط CUSTOMER مالک رزرو)
-   *
-   * چرا جدا از cancel؟
-   * - cancel برای owner و admin هم کاربرد داره (بدون reason)
-   * - این متد مخصوص مشتری هست که باید علت بنویسه
-   *
-   * قوانین:
-   * - فقط رزروهای PENDING یا CONFIRMED قابل لغو با reason هستن
-   * - فقط مشتری مالک رزرو می‌تونه (نه owner، نه admin)
-   * - reason سمت سرور sanitize می‌شه (حذف HTML + trim)
    */
   async cancelWithReason(id: string, userId: string, dto: CancelBookingDto) {
-    // ──── پیدا کردن رزرو با کسب‌وکار ────
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
@@ -725,12 +679,10 @@ export class BookingsService {
       throw new NotFoundException('رزرو یافت نشد');
     }
 
-    // ──── اعتبارسنجی مالکیت (فقط CUSTOMER) ────
     if (booking.customerId !== userId) {
       throw new ForbiddenException('شما مالک این رزرو نیستید');
     }
 
-    // ──── فقط PENDING یا CONFIRMED قابل لغو با reason ────
     const allowedStatuses: BookingStatus[] = [
       BookingStatus.PENDING,
       BookingStatus.CONFIRMED,
@@ -741,7 +693,6 @@ export class BookingsService {
       );
     }
 
-    // ──── Sanitize reason (حذف تگ‌های HTML + trim) ────
     const sanitizedReason = this.sanitizeText(dto.reason);
 
     if (sanitizedReason.length < 10) {
@@ -750,7 +701,6 @@ export class BookingsService {
       );
     }
 
-    // ──── محاسبه delta bookingsCount ────
     const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
     const bookingsCountDelta = wasConfirmed ? -1 : 0;
 
@@ -760,7 +710,6 @@ export class BookingsService {
       );
     }
 
-    // ──── لغو رزرو در transaction ────
     return this.prisma.$transaction(async (tx) => {
       const cancelledBooking = await tx.booking.update({
         where: { id },
@@ -785,22 +734,9 @@ export class BookingsService {
   }
 
   /**
-   * آمار درآمد تجمیعی OWNER در بازه زمانی (Phase 22 — Payment Dashboard)
-   *
-   * همه کسب‌وکارهای owner را در یک query تجمیع می‌کنیم (به‌جای حلقه در فرانت).
-   *
-   * خروجی:
-   *   - totalRevenue: درآمد کل (فقط COMPLETED)
-   *   - totalCompleted: تعداد کل رزروهای تکمیل‌شده
-   *   - businesses: تفکیک per کسب‌وکار
-   *
-   * قوانین:
-   *   - حداکثر بازه ۳۶۵ روز
-   *   - درآمد فقط از COMPLETED (قانون کسب‌وکار)
-   *   - Commission فعلاً ۰ (مدل درآمدی هنوز تصمیم نگرفته شده — §1)
+   * آمار درآمد تجمیعی OWNER در بازه زمانی
    */
   async getOwnerIncomeStats(userId: string, query?: { from?: string; to?: string }) {
-    // ──── همه کسب‌وکارهای کاربر ────
     const businesses = await this.prisma.business.findMany({
       where: { ownerId: userId },
       select: { id: true, name: true },
@@ -816,7 +752,6 @@ export class BookingsService {
 
     const businessIds = businesses.map((b) => b.id);
 
-    // ──── محاسبه بازه ────
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
@@ -824,7 +759,6 @@ export class BookingsService {
     const to = query?.to ? parseISOtoUTC(query.to) : now;
     to.setHours(23, 59, 59, 999);
 
-    // اعتبارسنجی بازه حداکثر ۳۶۵ روز
     const dayDiff = Math.ceil(
       (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24),
     );
@@ -837,7 +771,6 @@ export class BookingsService {
       throw new BadRequestException('تاریخ پایان باید بعد از تاریخ شروع باشد');
     }
 
-    // ──── تجمیع per کسب‌وکار (یک query برای همه) ────
     const perBusiness = await this.prisma.$queryRaw<
       Array<{
         businessId: string;
@@ -858,7 +791,6 @@ export class BookingsService {
       GROUP BY b."businessId"
     `;
 
-    // ──── ساخت خروجی ────
     const perBusinessMap = new Map<string, { completed: number; revenue: number }>();
     for (const row of perBusiness) {
       perBusinessMap.set(row.businessId, {
@@ -893,7 +825,6 @@ export class BookingsService {
 
   /**
    * Sanitize متن — حذف تگ‌های HTML + فشرده‌سازی فضای خالی
-   * Defense in depth: علاوه بر frontend sanitize، سمت سرور هم پاکسازی می‌کنیم
    */
   private sanitizeText(input: string): string {
     const noHtml = input.replace(/<[^>]*>/g, '');
@@ -901,7 +832,7 @@ export class BookingsService {
   }
 
   /**
-   * دریافت رزروهای پیش‌رو (upcoming appointments) برای OWNER
+   * دریافت رزروهای پیش‌رو برای OWNER
    */
   async getUpcomingForOwner(userId: string, days = 7) {
     const businesses = await this.prisma.business.findMany({
