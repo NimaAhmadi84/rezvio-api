@@ -7,13 +7,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StaffDateBreakDto } from './dto/create-staff-date-breaks.dto';
 
-// ──── Helper: تبدیل "HH:MM" به دقیقه از نیمه‌شب ────
 const timeToMinutes = (time: string): number => {
   const [h, m] = time.split(':').map(Number);
   return h * 60 + m;
 };
 
-// ──── Helper: امروز سرور به صورت YYYY-MM-DD (وقت محلی) ────
 const getLocalTodayISO = (): string => {
   const now = new Date();
   const y = now.getFullYear();
@@ -22,7 +20,6 @@ const getLocalTodayISO = (): string => {
   return `${y}-${m}-${d}`;
 };
 
-// ──── Helper: تبدیل YYYY-MM-DD به Date ساعت صفر UTC (برای ستون @db.Date) ────
 const parseDateToUTC = (iso: string): Date => {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
@@ -32,9 +29,6 @@ const parseDateToUTC = (iso: string): Date => {
 export class StaffDateBreaksService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * بررسی مالکیت: کارمند → کسب‌وکار → مالک (defense in depth)
-   */
   private async validateOwnership(staffId: string, userId: string) {
     const staff = await this.prisma.staff.findUnique({
       where: { id: staffId },
@@ -52,13 +46,6 @@ export class StaffDateBreaksService {
     return staff;
   }
 
-  /**
-   * اعتبارسنجی لیست غیبت‌های موردی
-   * - پایان بعد از شروع + حداقل ۱۰ دقیقه
-   * - تاریخ نباید در گذشته باشد
-   * - بدون تداخل در یک تاریخ واحد
-   * - حداکثر ۵ بازه در هر تاریخ
-   */
   private validateBreaks(breaks: StaffDateBreakDto[]) {
     const todayIso = getLocalTodayISO();
     const perDate = new Map<string, StaffDateBreakDto[]>();
@@ -111,10 +98,6 @@ export class StaffDateBreaksService {
     });
   }
 
-  /**
-   * دریافت غیبت‌های موردی یک کارمند (مرتب بر اساس تاریخ)
-   * GET /availability/staff-date-breaks/:staffId
-   */
   async getBreaks(staffId: string, userId: string) {
     await this.validateOwnership(staffId, userId);
 
@@ -124,13 +107,60 @@ export class StaffDateBreaksService {
     });
   }
 
-  /**
-   * جایگزینی کامل لیست غیبت‌های موردی (replace-all)
-   * POST /availability/staff-date-breaks/:staffId
-   */
   async setBreaks(staffId: string, userId: string, breaks: StaffDateBreakDto[]) {
-    await this.validateOwnership(staffId, userId);
+    const staff = await this.validateOwnership(staffId, userId);
     this.validateBreaks(breaks);
+
+    // ★ NEW: چک تعطیلات رسمی کسب‌وکار
+    if (breaks.length > 0) {
+      const dates = [...new Set(breaks.map((b) => b.date))];
+      const dateObjects = dates.map((d) => parseDateToUTC(d));
+
+      const holidays = await this.prisma.holiday.findMany({
+        where: {
+          businessId: staff.businessId,
+          date: { in: dateObjects },
+        },
+        select: { date: true },
+      });
+
+      if (holidays.length > 0) {
+        const holidayDates = new Set(
+          holidays.map((h) => {
+            const y = h.date.getUTCFullYear();
+            const m = String(h.date.getUTCMonth() + 1).padStart(2, '0');
+            const d = String(h.date.getUTCDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+          }),
+        );
+
+        const conflictingDates = dates.filter((d) => holidayDates.has(d));
+        throw new BadRequestException(
+          `نمی‌توانید برای تاریخ‌های ${conflictingDates.join('، ')} غیبت تعریف کنید — این روزها تعطیل رسمی کسب‌وکار هستند`,
+        );
+      }
+
+      // ★ NEW: چک روزهای تعطیل هفتگی
+      const businessHours = await this.prisma.businessHour.findMany({
+        where: { businessId: staff.businessId },
+        select: { dayOfWeek: true },
+      });
+
+      const workingDays = new Set(businessHours.map((h) => h.dayOfWeek));
+      const dayNames = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'];
+
+      for (const b of breaks) {
+        const dateObj = parseDateToUTC(b.date);
+        const jsDay = dateObj.getUTCDay();
+        const iranDay = (jsDay + 1) % 7;
+
+        if (!workingDays.has(iranDay)) {
+          throw new BadRequestException(
+            `نمی‌توانید برای ${b.date} (${dayNames[iranDay]}) غیبت تعریف کنید — این روز در کسب‌وکار تعطیل است`,
+          );
+        }
+      }
+    }
 
     return this.prisma.$transaction(async (tx) => {
       await tx.staffDateBreak.deleteMany({ where: { staffId } });
