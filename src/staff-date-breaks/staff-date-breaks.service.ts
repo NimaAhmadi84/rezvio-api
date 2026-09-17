@@ -46,6 +46,20 @@ export class StaffDateBreaksService {
     return staff;
   }
 
+  private hasTimeOverlap(
+    aStart: string,
+    aEnd: string,
+    bStart: string,
+    bEnd: string,
+  ): boolean {
+    const aStartMin = timeToMinutes(aStart);
+    const aEndMin = timeToMinutes(aEnd);
+    const bStartMin = timeToMinutes(bStart);
+    const bEndMin = timeToMinutes(bEnd);
+
+    return aStartMin < bEndMin && aEndMin > bStartMin;
+  }
+
   private validateBreaks(breaks: StaffDateBreakDto[]) {
     const todayIso = getLocalTodayISO();
     const perDate = new Map<string, StaffDateBreakDto[]>();
@@ -60,11 +74,13 @@ export class StaffDateBreaksService {
           `ردیف ${i + 1}: ساعت پایان باید بعد از شروع باشد`,
         );
       }
+
       if (endMin - startMin < 10) {
         throw new BadRequestException(
           `ردیف ${i + 1}: طول بازه باید حداقل ۱۰ دقیقه باشد`,
         );
       }
+
       if (b.date < todayIso) {
         throw new BadRequestException(
           `ردیف ${i + 1}: تاریخ نمی‌تواند در گذشته باشد`,
@@ -82,13 +98,17 @@ export class StaffDateBreaksService {
           `حداکثر ۵ بازه در تاریخ ${date} مجاز است`,
         );
       }
+
       for (let i = 0; i < list.length; i++) {
         for (let j = i + 1; j < list.length; j++) {
-          const aStart = timeToMinutes(list[i].startTime);
-          const aEnd = timeToMinutes(list[i].endTime);
-          const bStart = timeToMinutes(list[j].startTime);
-          const bEnd = timeToMinutes(list[j].endTime);
-          if (aStart < bEnd && aEnd > bStart) {
+          if (
+            this.hasTimeOverlap(
+              list[i].startTime,
+              list[i].endTime,
+              list[j].startTime,
+              list[j].endTime,
+            )
+          ) {
             throw new BadRequestException(
               `دو بازه در تاریخ ${date} با هم تداخل دارند`,
             );
@@ -107,15 +127,20 @@ export class StaffDateBreaksService {
     });
   }
 
-  async setBreaks(staffId: string, userId: string, breaks: StaffDateBreakDto[]) {
+  async setBreaks(
+    staffId: string,
+    userId: string,
+    breaks: StaffDateBreakDto[],
+  ) {
     const staff = await this.validateOwnership(staffId, userId);
+
     this.validateBreaks(breaks);
 
-    // ★ NEW: چک تعطیلات رسمی کسب‌وکار
     if (breaks.length > 0) {
       const dates = [...new Set(breaks.map((b) => b.date))];
       const dateObjects = dates.map((d) => parseDateToUTC(d));
 
+      // ★ چک تعطیلات رسمی کسب‌وکار
       const holidays = await this.prisma.holiday.findMany({
         where: {
           businessId: staff.businessId,
@@ -130,24 +155,37 @@ export class StaffDateBreaksService {
             const y = h.date.getUTCFullYear();
             const m = String(h.date.getUTCMonth() + 1).padStart(2, '0');
             const d = String(h.date.getUTCDate()).padStart(2, '0');
+
             return `${y}-${m}-${d}`;
           }),
         );
 
         const conflictingDates = dates.filter((d) => holidayDates.has(d));
+
         throw new BadRequestException(
           `نمی‌توانید برای تاریخ‌های ${conflictingDates.join('، ')} غیبت تعریف کنید — این روزها تعطیل رسمی کسب‌وکار هستند`,
         );
       }
 
-      // ★ NEW: چک روزهای تعطیل هفتگی
+      // ★ چک روزهای تعطیل هفتگی
       const businessHours = await this.prisma.businessHour.findMany({
         where: { businessId: staff.businessId },
         select: { dayOfWeek: true },
       });
 
-      const workingDays = new Set(businessHours.map((h) => h.dayOfWeek));
-      const dayNames = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'];
+      const workingDays = new Set(
+        businessHours.map((h) => h.dayOfWeek),
+      );
+
+      const dayNames = [
+        'شنبه',
+        'یکشنبه',
+        'دوشنبه',
+        'سه‌شنبه',
+        'چهارشنبه',
+        'پنج‌شنبه',
+        'جمعه',
+      ];
 
       for (const b of breaks) {
         const dateObj = parseDateToUTC(b.date);
@@ -157,6 +195,40 @@ export class StaffDateBreaksService {
         if (!workingDays.has(iranDay)) {
           throw new BadRequestException(
             `نمی‌توانید برای ${b.date} (${dayNames[iranDay]}) غیبت تعریف کنید — این روز در کسب‌وکار تعطیل است`,
+          );
+        }
+      }
+
+      // ★ NEW: چک تداخل غیبت موردی با غیبت هفتگی کارمند
+      const weeklyBreaks = await this.prisma.staffBreak.findMany({
+        where: { staffId },
+        select: {
+          dayOfWeek: true,
+          startTime: true,
+          endTime: true,
+        },
+        orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+      });
+
+      for (const b of breaks) {
+        const dateObj = parseDateToUTC(b.date);
+        const jsDay = dateObj.getUTCDay();
+        const iranDay = (jsDay + 1) % 7;
+
+        const overlappingWeeklyBreak = weeklyBreaks.find(
+          (weeklyBreak) =>
+            weeklyBreak.dayOfWeek === iranDay &&
+            this.hasTimeOverlap(
+              b.startTime,
+              b.endTime,
+              weeklyBreak.startTime,
+              weeklyBreak.endTime,
+            ),
+        );
+
+        if (overlappingWeeklyBreak) {
+          throw new BadRequestException(
+            `غیبت موردی در تاریخ ${b.date} (${dayNames[iranDay]}) با غیبت هفتگی کارمند در ساعت ${overlappingWeeklyBreak.startTime} تا ${overlappingWeeklyBreak.endTime} تداخل دارد`,
           );
         }
       }
