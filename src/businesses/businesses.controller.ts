@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { BusinessesService } from './businesses.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
 import { SearchBusinessesDto } from './dto/search-businesses.dto';
+import { RecordViewDto } from './dto/record-view.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -95,6 +96,20 @@ export class BusinessesController {
   @ApiOperation({ summary: 'دریافت کسب‌وکار با slug (عمومی - برای صفحه رزرو)' })
   findBySlug(@Param('slug') slug: string) {
     return this.businessesService.findBySlug(slug);
+  }
+    @Post('slug/:slug/view')
+  @ApiOperation({
+    summary: 'ثبت بازدید صفحه عمومی کسب‌وکار',
+    description: 'هر visitorId فقط هر 30 دقیقه یکبار می‌تواند view بدهد. Bot ها و owner خود کسب‌وکار شمرده نمی‌شوند.',
+  })
+  @ApiResponse({ status: 200, description: '{ counted: boolean }' })
+  recordView(
+    @Param('slug') slug: string,
+    @Body() dto: RecordViewDto,
+    @Headers('user-agent') userAgent: string,
+    @Headers('x-user-id') userId?: string,
+  ) {
+    return this.businessesService.recordView(slug, dto.visitorId, userAgent || '', userId);
   }
 
   @Get(':id')

@@ -1,4 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { nanoid } from 'nanoid';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,7 +14,10 @@ import { SearchBusinessesDto } from './dto/search-businesses.dto';
 export class BusinessesService {
   private readonly logger = new Logger(BusinessesService.name);
 
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(CACHE_MANAGER) private readonly cache: Cache,
+  ) { }
 
   /**
    * تبدیل نام به slug (URL-friendly)
@@ -373,16 +379,76 @@ export class BusinessesService {
     });
     if (!business) throw new NotFoundException('کسب‌وکار یافت نشد');
 
-    // افزایش viewsCount (آمار بازدید صفحه عمومی)
+    // ❌ حذف شده: viewsCount حالا در endpoint جداگانه POST /businesses/:slug/view مدیریت می‌شود
+    return business;
+  }
+
+  /**
+   * ثبت بازدید صفحه عمومی کسب‌وکار با deduplication 30 دقیقه
+   * - Rate limit: یک visitorId فقط هر 30 دقیقه یکبار می‌تواند view بدهد
+   * - Bot filtering: crawler ها (Googlebot, Bingbot, etc) رد می‌شوند
+   * - Owner filtering: اگر owner خودش صفحه را ببیند، شمرده نمی‌شود
+   */
+  async recordView(
+    slug: string,
+    visitorId: string,
+    userAgent: string,
+    userId?: string,
+  ): Promise<{ counted: boolean }> {
+    // 1. Bot filtering
+    const botPatterns = [
+      'googlebot',
+      'bingbot',
+      'slurp',
+      'duckduckbot',
+      'baiduspider',
+      'yandexbot',
+      'facebot',
+      'ia_archiver',
+      'twitterbot',
+      'linkedinbot',
+      'whatsapp',
+      'telegrambot',
+      'bot',
+      'crawler',
+      'spider',
+    ];
+    const ua = userAgent.toLowerCase();
+    if (botPatterns.some((pattern) => ua.includes(pattern))) {
+      return { counted: false };
+    }
+
+    // 2. Find business
+    const business = await this.prisma.business.findUnique({
+      where: { slug },
+      select: { id: true, ownerId: true },
+    });
+    if (!business) {
+      return { counted: false };
+    }
+
+    // 3. Owner filtering: اگر owner خودش صفحه را ببیند، شمرده نمی‌شود
+    if (userId && userId === business.ownerId) {
+      return { counted: false };
+    }
+
+    // 4. Rate limit: یک visitorId فقط هر 30 دقیقه یکبار
+    const cacheKey = `view:${business.id}:${visitorId}`;
+    const alreadyViewed = await this.cache.get(cacheKey);
+    if (alreadyViewed) {
+      return { counted: false };
+    }
+
+    // 5. Atomic increment
     await this.prisma.business.update({
       where: { id: business.id },
       data: { viewsCount: { increment: 1 } },
     });
 
-    // مقدار viewsCount را دستی افزایش می‌دهیم تا در response درست باشد
-    business.viewsCount = (business.viewsCount ?? 0) + 1;
+    // 6. Set cache با TTL 30 دقیقه (1800 ثانیه)
+    await this.cache.set(cacheKey, '1', 1800000); // 30 min in ms
 
-    return business;
+    return { counted: true };
   }
 
   async checkOwnership(businessId: string, userId: string): Promise<void> {
