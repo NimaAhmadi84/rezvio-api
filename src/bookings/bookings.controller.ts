@@ -24,6 +24,7 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { IncomeStatsQueryDto } from './dto/income-stats-query.dto';
+import { BatchUpdateStatusDto } from './dto/batch-update-status.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -150,6 +151,34 @@ export class BookingsController {
     @Query() query: IncomeStatsQueryDto,
   ) {
     return this.bookingsService.getOwnerIncomeStats(user.id, query);
+  }
+
+  /**
+   * Batch update status برای چند رزرو همزمان (Owner/Admin only)
+   *
+   * - فقط CONFIRMED یا CANCELLED مجاز است
+   * - حداکثر ۵۰ رزرو در هر درخواست
+   * - Ownership validation برای همه رزروها
+   * - Atomic transaction برای همه updates
+   */
+  @Patch('batch/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'تغییر وضعیت چند رزرو همزمان (Batch)',
+    description:
+      'فقط CONFIRMED یا CANCELLED مجاز است. حداکثر ۵۰ رزرو در هر درخواست. فقط Owner/Admin.',
+  })
+  @ApiResponse({ status: 200, description: 'لیست رزروهای آپدیت شده' })
+  @ApiResponse({ status: 400, description: 'خطای اعتبارسنجی یا transition نامجاز' })
+  @ApiResponse({ status: 403, description: 'دسترسی غیرمجاز' })
+  @ApiResponse({ status: 404, description: 'برخی رزروها یافت نشدند' })
+  batchUpdateStatus(
+    @CurrentUser() user: AuthUserDto,
+    @Body() dto: BatchUpdateStatusDto,
+  ) {
+    return this.bookingsService.batchUpdateStatus(user.id, user.role, dto);
   }
 
   // ═══════════════════════════════════════════════════════════════

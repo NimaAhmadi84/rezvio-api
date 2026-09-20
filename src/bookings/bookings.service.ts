@@ -11,6 +11,7 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
+import { BatchUpdateStatusDto } from './dto/batch-update-status.dto';
 import { BusinessesService } from '../businesses/businesses.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { BookingStatus, PaymentMethod } from '@prisma/client';
@@ -902,5 +903,132 @@ export class BookingsService {
     );
 
     return bookings;
+  }
+
+  /**
+   * Batch update status برای چند رزرو همزمان (Owner/Admin only)
+   * - فقط CONFIRMED یا CANCELLED مجاز است
+   * - Ownership validation برای همه رزروها
+   * - Atomic transaction برای همه updates
+   * - bookingsCount delta محاسبه و اعمال می‌شه
+   */
+  async batchUpdateStatus(
+    userId: string,
+    userRole: string,
+    dto: BatchUpdateStatusDto,
+  ) {
+    const isOwner = userRole === 'OWNER';
+    const isAdmin = userRole === 'ADMIN';
+
+    if (!isOwner && !isAdmin) {
+      throw new ForbiddenException('فقط صاحب کسب‌وکار یا مدیر می‌تواند وضعیت رزروها را تغییر دهد');
+    }
+
+    // Fetch all bookings with business info for ownership check
+    const bookings = await this.prisma.booking.findMany({
+      where: { id: { in: dto.bookingIds } },
+      include: {
+        business: {
+          select: { ownerId: true },
+        },
+      },
+    });
+
+    if (bookings.length !== dto.bookingIds.length) {
+      const foundIds = new Set(bookings.map((b) => b.id));
+      const missingIds = dto.bookingIds.filter((id) => !foundIds.has(id));
+      throw new NotFoundException(`رزروهای یافت نشد: ${missingIds.join(', ')}`);
+    }
+
+    // Validate ownership and status transitions for each booking
+    const errors: string[] = [];
+    let totalBookingsCountDelta = 0;
+
+    for (const booking of bookings) {
+      // Ownership check (for OWNER role)
+      if (isOwner && booking.business.ownerId !== userId) {
+        errors.push(`رزرو ${booking.id}: شما مالک این کسب‌وکار نیستید`);
+        continue;
+      }
+
+      // Status transition validation
+      const allowedTransitions = STATUS_TRANSITIONS[booking.status];
+      if (!allowedTransitions.includes(dto.status as BookingStatus)) {
+        errors.push(
+          `رزرو ${booking.id}: تغییر وضعیت از ${booking.status} به ${dto.status} مجاز نیست`,
+        );
+        continue;
+      }
+
+      // Calculate bookingsCount delta
+      const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
+      const willBeConfirmed = dto.status === 'CONFIRMED';
+      const willBeCancelled = dto.status === 'CANCELLED';
+
+      if (!wasConfirmed && willBeConfirmed) {
+        totalBookingsCountDelta += 1;
+      } else if (wasConfirmed && willBeCancelled) {
+        totalBookingsCountDelta -= 1;
+      }
+    }
+
+    if (errors.length > 0) {
+      throw new BadRequestException(errors.join('\n'));
+    }
+
+    // Atomic transaction: update all bookings + adjust bookingsCount
+    return this.prisma.$transaction(async (tx) => {
+      // Update all bookings
+      const updatedBookings = await Promise.all(
+        dto.bookingIds.map((id) =>
+          tx.booking.update({
+            where: { id },
+            data: { status: dto.status as BookingStatus },
+          }),
+        ),
+      );
+
+      // Adjust bookingsCount for affected businesses
+      if (totalBookingsCountDelta !== 0) {
+        // Group bookings by businessId to batch updates
+        const businessDeltas = new Map<string, number>();
+        for (const booking of bookings) {
+          const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
+          const willBeConfirmed = dto.status === 'CONFIRMED';
+          const willBeCancelled = dto.status === 'CANCELLED';
+
+          let delta = 0;
+          if (!wasConfirmed && willBeConfirmed) delta = 1;
+          else if (wasConfirmed && willBeCancelled) delta = -1;
+
+          if (delta !== 0) {
+            businessDeltas.set(
+              booking.businessId,
+              (businessDeltas.get(booking.businessId) || 0) + delta,
+            );
+          }
+        }
+
+        // Apply deltas to each business
+        for (const [businessId, delta] of businessDeltas) {
+          await tx.business.update({
+            where: { id: businessId },
+            data: {
+              bookingsCount: { increment: delta },
+            },
+          });
+        }
+
+        this.logger.log(
+          `📊 Batch update: ${updatedBookings.length} bookings → ${dto.status}, bookingsCount delta: ${totalBookingsCountDelta}`,
+        );
+      }
+
+      return {
+        updated: updatedBookings.length,
+        status: dto.status,
+        bookings: updatedBookings,
+      };
+    });
   }
 }
