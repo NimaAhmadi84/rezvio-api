@@ -1,4 +1,7 @@
 import {
+  Inject,
+  forwardRef,
+  Logger,
   Controller,
   Post,
   Body,
@@ -17,11 +20,14 @@ import {
 import { Throttle } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service';
+import { OtpService } from '../otp/otp.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { CheckIdentifierDto } from './dto/check-identifier.dto';
 import { LoginPasswordDto } from './dto/login-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -33,7 +39,13 @@ import { UserRole } from '@prisma/client';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    @Inject(forwardRef(() => OtpService))
+    private readonly otpService: OtpService,
+  ) {}
+
+  private readonly logger = new Logger(AuthController.name);
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
@@ -130,5 +142,29 @@ export class AuthController {
       message: 'شما به عنوان ادمین به این endpoint دسترسی دارید',
       user,
     };
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ otp: { limit: 10, ttl: 60000 } })
+  @ApiOperation({ summary: 'درخواست بازیابی رمز عبور (ارسال OTP)' })
+  @ApiResponse({ status: 200, description: 'درخواست ثبت شد (پیام یکسان برای جلوگیری از Account Enumeration)' })
+  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<{ message: string }> {
+    try {
+      await this.otpService.request(dto.identifier);
+    } catch (e) {
+      this.logger.warn(`forgot-password request failed for ${dto.identifier}: ${(e as Error).message}`);
+    }
+    return { message: 'اگر حسابی با این شناسه وجود داشته باشد، کد بازیابی ارسال شد' };
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @ApiOperation({ summary: 'تأیید OTP و تغییر رمز عبور' })
+  @ApiResponse({ status: 200, description: 'رمز عبور با موفقیت تغییر کرد' })
+  @ApiResponse({ status: 400, description: 'کد نامعتبر یا منقضی شده' })
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<{ message: string }> {
+    return this.authService.resetPassword(dto.identifier, dto.code, dto.password);
   }
 }

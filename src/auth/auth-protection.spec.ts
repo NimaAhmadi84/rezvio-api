@@ -84,7 +84,8 @@ describe('Auth protection (Phase A)', () => {
         updatedAt: new Date(),
       });
 
-    const controller = new AuthController(authService);
+    const otpServiceMock = { request: jest.fn(), isDevBypassCode: jest.fn().mockReturnValue(false) } as any;
+    const controller = new AuthController(authService, otpServiceMock);
 
     type CheckIdentifierInput = Parameters<
       AuthController['checkIdentifier']

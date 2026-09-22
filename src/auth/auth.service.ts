@@ -13,6 +13,8 @@ import * as bcrypt from 'bcryptjs';
 
 import { UserRole } from '@prisma/client';
 import { UsersService } from '../users/users.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { OtpService } from '../otp/otp.service';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
@@ -30,6 +32,9 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => OtpService))
+    private readonly otpService: OtpService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<AuthUserDto | null> {
@@ -167,5 +172,70 @@ export class AuthService {
     dto.role = user.role;
     dto.createdAt = user.createdAt;
     return dto;
+  }
+  /**
+   * بازیابی رمز عبور با OTP — Account Enumeration Protection:
+   * همیشه پیام یکسان برمی‌گرداند حتی اگر کاربر وجود نداشته باشد.
+   */
+  async resetPassword(identifier: string, code: string, newPassword: string): Promise<{ message: string }> {
+    const normalizedIdentifier = identifier.trim().toLowerCase();
+    const user = await this.usersService.findByEmailOrPhone(normalizedIdentifier);
+
+    // ──── Dev/test bypass ────
+    if (this.otpService.isDevBypassCode(code)) {
+      if (!user) {
+        this.logger.warn(`DEV reset-password bypass for non-existent user: ${normalizedIdentifier}`);
+        return { message: 'اگر حسابی با این شناسه وجود داشته باشد، لینک بازیابی ارسال شد' };
+      }
+      const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+      await this.usersService.updateUser(user.id, { password: hashedPassword });
+      this.logger.log(`✅ DEV reset-password bypass used for ${normalizedIdentifier}`);
+      return { message: 'رمز عبور با موفقیت تغییر کرد' };
+    }
+
+    // ──── Production path: validate OTP atomically ────
+    if (!user) {
+      return { message: 'اگر حسابی با این شناسه وجود داشته باشد، لینک بازیابی ارسال شد' };
+    }
+
+    const otp = await this.prisma.otpCode.findFirst({
+      where: { identifier: normalizedIdentifier, verified: false },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!otp || otp.expiresAt < new Date()) {
+      return { message: 'اگر حسابی با این شناسه وجود داشته باشد، لینک بازیابی ارسال شد' };
+    }
+
+    if (otp.attempts >= 3) {
+      throw new BadRequestException('تعداد تلاش‌های ناموفق تمام شد. لطفاً دوباره درخواست کد دهید.');
+    }
+
+    if (otp.code !== code) {
+      await this.prisma.otpCode.update({
+        where: { id: otp.id },
+        data: { attempts: otp.attempts + 1 },
+      });
+      throw new BadRequestException('کد تأیید نامعتبر است.');
+    }
+
+    // ──── Atomic: consume OTP + update password in transaction ────
+    await this.prisma.$transaction(async (tx) => {
+      const consumed = await tx.otpCode.updateMany({
+        where: { id: otp.id, verified: false },
+        data: { verified: true },
+      });
+      if (consumed.count !== 1) {
+        throw new BadRequestException('کد تأیید قبلاً استفاده شده است.');
+      }
+      const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+      await tx.user.update({
+        where: { id: user.id },
+        data: { password: hashedPassword },
+      });
+    });
+
+    this.logger.log(`✅ Password reset successful for ${normalizedIdentifier}`);
+    return { message: 'رمز عبور با موفقیت تغییر کرد' };
   }
 }
