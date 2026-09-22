@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { SmsService } from '../sms/sms.service';
@@ -8,6 +9,14 @@ const OTP_TTL_MINUTES = 5;
 const MAX_ATTEMPTS = 3;
 const MAX_REQUESTS_PER_WINDOW = 3;
 const WINDOW_MINUTES = 15;
+
+// Fixed code accepted ONLY when OTP dev mode is explicitly enabled
+// in an allowlisted environment (development/test).
+const DEV_OTP_CODE_DEFAULT = '123456';
+
+// ──── OTP dev mode is ONLY allowed in these environments ────
+// production, staging and every other environment are fail-closed.
+const DEV_OTP_ALLOWED_ENVS = ['development', 'test'];
 
 type IdentifierType = 'email' | 'phone';
 
@@ -21,7 +30,42 @@ export class OtpService {
     private readonly smsService: SmsService,
     @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    // ──── Fail-fast: dev OTP mode is only allowed in development/test ────
+    if (this.isDevModeRequested() && !this.isDevAllowedEnv()) {
+      throw new Error('OTP_DEV_MODE is only allowed in development/test environments');
+    }
+  }
+
+  /** Explicit opt-in via env, e.g. OTP_DEV_MODE=true (dev/test only). */
+  private isDevModeRequested(): boolean {
+    return this.configService.get<string>('OTP_DEV_MODE') === 'true';
+  }
+
+  private currentEnv(): string | undefined {
+    return this.configService.get<string>('NODE_ENV') ?? process.env.NODE_ENV;
+  }
+
+  /** Allowlist gate: development/test only. Everything else is fail-closed. */
+  private isDevAllowedEnv(): boolean {
+    const env = this.currentEnv();
+    return !!env && DEV_OTP_ALLOWED_ENVS.includes(env);
+  }
+
+  /** True only when explicitly enabled AND in an allowlisted environment. */
+  isDevOtpMode(): boolean {
+    return this.isDevModeRequested() && this.isDevAllowedEnv();
+  }
+
+  private devBypassCode(): string {
+    return this.configService.get<string>('OTP_DEV_CODE') || DEV_OTP_CODE_DEFAULT;
+  }
+
+  /** Whether the given code is accepted as the dev/test bypass code. Never true outside development/test. */
+  isDevBypassCode(code: string): boolean {
+    return this.isDevOtpMode() && code === this.devBypassCode();
+  }
 
   private normalize(input: string): string {
     const faToEn = (s: string) =>
@@ -86,6 +130,14 @@ export class OtpService {
     password?: string,
   ): Promise<any> {
     const identifier = this.normalize(rawIdentifier);
+
+    // ──── Dev/test bypass: fixed code, no DB row needed ────
+    // Active only when OTP_DEV_MODE=true AND NODE_ENV is development/test.
+    if (this.isDevBypassCode(code)) {
+      this.logger.warn(`DEV OTP bypass used for ${identifier} (development/test only)`);
+      const result = await this.authService.loginOrCreate(identifier, name, phone, email, password);
+      return { ...result, otpVerified: true };
+    }
 
     const otp = await this.prisma.otpCode.findFirst({
       where: { identifier, verified: false },

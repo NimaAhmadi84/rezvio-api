@@ -45,12 +45,18 @@ export class AuthService {
     if (existingUser) {
       throw new ConflictException('این ایمیل قبلاً در سیستم ثبت شده است');
     }
+    // ──── Self-registration is always CUSTOMER ────
+    // The `role` field is accepted for API compatibility but never trusted:
+    // higher roles (OWNER/ADMIN) must be granted by an admin, never self-assigned.
+    if (dto.role && dto.role !== ('CUSTOMER' as UserRole)) {
+      this.logger.warn(`Ignoring self-registration role request: ${dto.role} for ${dto.email}`);
+    }
     const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
     const user = await this.usersService.createWithHashedPassword({
       email: dto.email,
       name: dto.name,
       password: hashedPassword,
-      role: dto.role ?? ('CUSTOMER' as UserRole),
+      role: 'CUSTOMER' as UserRole,
     });
     return this.generateTokens(user);
   }
@@ -81,13 +87,21 @@ export class AuthService {
   async loginWithPassword(identifier: string, password: string): Promise<AuthResponseDto> {
     const user = await this.usersService.findByEmailOrPhone(identifier);
     if (!user || !user.password) {
-      throw new BadRequestException('شناسه یا رمز عبور اشتباه است');
+      throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
     }
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      throw new BadRequestException('شناسه یا رمز عبور اشتباه است');
+      throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
     }
     return this.generateTokens(this.toAuthUserDto(user));
+  }
+
+  /**
+   * Public lookup for the check-identifier endpoint.
+   * (Replaces direct private-property access from the controller.)
+   */
+  async findForIdentifierCheck(identifier: string) {
+    return this.usersService.findByEmailOrPhone(identifier);
   }
 
   async loginOrCreate(

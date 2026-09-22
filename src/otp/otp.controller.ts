@@ -1,5 +1,6 @@
 import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { OtpService } from './otp.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -11,6 +12,7 @@ export class OtpController {
 
   @Post('request')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ otp: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: 'درخواست کد یکبار مصرف' })
   async request(@Body() dto: RequestOtpDto) {
     return this.otpService.request(dto.identifier);
@@ -18,6 +20,7 @@ export class OtpController {
 
   @Post('verify')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ otp: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: 'تأیید کد یکبار مصرف + ورود/ثبت‌نام خودکار' })
   async verify(@Body() dto: VerifyOtpDto) {
     return this.otpService.verifyCode(

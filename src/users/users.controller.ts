@@ -19,8 +19,11 @@ import { ConfirmEmailChangeDto } from './dto/confirm-email-change.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUserDto } from '../auth/dto/auth-response.dto';
+import { UserRole } from '@prisma/client';
 
 @ApiTags('Users')
 @Controller('users')
@@ -28,13 +31,19 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  @ApiOperation({ summary: 'ساخت کاربر جدید' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'ساخت کاربر جدید (فقط ادمین)' })
   create(@Body() dto: CreateUserDto) {
     return this.usersService.create(dto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'دریافت لیست همه کاربران' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'دریافت لیست همه کاربران (فقط ادمین)' })
   findAll() {
     return this.usersService.findAll();
   }
@@ -95,7 +104,7 @@ export class UsersController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'تایید تغییر ایمیل با OTP' })
   confirmEmailChange(@CurrentUser() user: AuthUserDto, @Body() dto: ConfirmEmailChangeDto) {
-    return this.usersService.confirmEmailChange(user.id, dto.code);
+    return this.usersService.confirmEmailChange(user.id, dto.code, dto.newEmail);
   }
 
   /**
@@ -115,19 +124,28 @@ export class UsersController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'دریافت کاربر با ID' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'دریافت کاربر با ID (فقط ادمین)' })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.usersService.findOne(id);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'آپدیت کاربر' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'آپدیت کاربر (فقط ادمین)' })
   update(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: UpdateUserDto) {
     return this.usersService.update(id, dto);
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'حذف کاربر' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'حذف کاربر (فقط ادمین)' })
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.usersService.remove(id);
   }

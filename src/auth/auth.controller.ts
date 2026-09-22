@@ -14,6 +14,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -36,6 +37,7 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  @Throttle({ auth: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'ثبت‌نام کاربر جدید' })
   @ApiResponse({
     status: 201,
@@ -50,6 +52,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @UseGuards(LocalAuthGuard)
+  @Throttle({ auth: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'ورود کاربر' })
   @ApiResponse({
     status: 200,
@@ -66,6 +69,7 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ auth: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'دریافت Access Token جدید با Refresh Token' })
   @ApiResponse({ status: 200, description: 'Access Token جدید' })
   @ApiResponse({ status: 401, description: 'Refresh Token نامعتبر' })
@@ -87,11 +91,12 @@ export class AuthController {
 
   @Post('check-identifier')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ auth: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'بررسی وجود کاربر با شناسه' })
   @ApiResponse({ status: 200, description: 'نتیجه بررسی' })
   async checkIdentifier(@Body() dto: CheckIdentifierDto) {
     const isEmail = dto.identifier.includes('@');
-    const user = await this.authService['usersService'].findByEmailOrPhone(dto.identifier);
+    const user = await this.authService.findForIdentifierCheck(dto.identifier);
     return {
       exists: !!user,
       methods: user
@@ -105,6 +110,7 @@ export class AuthController {
 
   @Post('login-password')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ auth: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'ورود با رمز عبور' })
   @ApiResponse({ status: 200, description: 'ورود موفق', type: AuthResponseDto })
   @ApiResponse({ status: 401, description: 'شناسه یا رمز اشتباه' })

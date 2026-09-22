@@ -44,6 +44,18 @@ import { BusinessReviewsModule } from './business-reviews/business-reviews.modul
           ttl: 60000,
           limit: 100,
         },
+        // ──── Auth endpoints: brute-force protection (Phase A) ────
+        {
+          name: 'auth',
+          ttl: 60000,
+          limit: 20,
+        },
+        // ──── OTP endpoints: stricter, on top of app-level limits ────
+        {
+          name: 'otp',
+          ttl: 60000,
+          limit: 10,
+        },
       ],
     }),
     ConfigModule.forRoot({
