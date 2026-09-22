@@ -5,6 +5,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as os from 'os';
 import { AppModule } from './app.module';
+import { validateSecurityConfig } from './config/security-config';
 
 // ═══════════════════════════════════════════════════════════════
 // Helper: Get Local Network IP
@@ -26,6 +27,9 @@ function getLocalNetworkIP(): string {
 // Bootstrap
 // ═══════════════════════════════════════════════════════════════
 async function bootstrap() {
+  // ──── Fail fast on insecure/missing security config ────
+  validateSecurityConfig(process.env);
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // ──── Security headers ────
@@ -62,15 +66,19 @@ async function bootstrap() {
     }),
   );
 
-  // ──── Swagger (API docs) ────
-  const config = new DocumentBuilder()
-    .setTitle('Rezvio API')
-    .setDescription('Multi-tenant booking SaaS API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // ──── Swagger (API docs) — non-production only ────
+  if (!isProduction) {
+    const config = new DocumentBuilder()
+      .setTitle('Rezvio API')
+      .setDescription('Multi-tenant booking SaaS API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  } else {
+    console.log('📚 Swagger docs: disabled in PRODUCTION');
+  }
 
   // ──── Start Server ────
   const port = process.env.PORT || 3001;

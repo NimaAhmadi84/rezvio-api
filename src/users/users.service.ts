@@ -25,6 +25,18 @@ const COMMON_PASSWORD_BLACKLIST = [
   'mysecretpassword', 'test1234', 'guest123', 'root1234',
 ];
 
+// ──── فیلدهای برگشتی پس از تغییر ایمیل (مشترک بین هر دو مسیر) ────
+const EMAIL_CHANGE_SELECT = {
+  id: true,
+  email: true,
+  name: true,
+  phone: true,
+  nationalId: true,
+  role: true,
+  createdAt: true,
+  updatedAt: true,
+};
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -284,61 +296,119 @@ export class UsersService {
   }
 
   /**
-   * تایید تغییر ایمیل با OTP
+   * تایید تغییر ایمیل با OTP — مقید به identifier (ایمیل جدید)
+   *
+   * قرارداد API: { code, newEmail } — هر دو الزامی.
+   * فقط OTPای پذیرفته می‌شود که برای همین ایمیل صادر شده باشد
+   * (identifier === newEmail) و منقضی/مصرف/تمام‌تلاش نشده باشد.
    */
-  async confirmEmailChange(userId: string, code: string) {
+  async confirmEmailChange(userId: string, code: string, newEmail: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('کاربر یافت نشد');
     }
 
-    const recentOtps = await this.prisma.otpCode.findMany({
+    const normalizedNewEmail = newEmail?.trim();
+    if (!normalizedNewEmail) {
+      throw new BadRequestException('ایمیل جدید الزامی است');
+    }
+
+    // ──── Dev/test bypass: only with explicit newEmail, never in production ────
+    if (this.otpService.isDevBypassCode(code)) {
+      return this.applyEmailChangeWithoutOtp(userId, user.email, normalizedNewEmail);
+    }
+
+    // ──── Bound path: OTP must belong to the claimed new email ────
+    const otp = await this.prisma.otpCode.findFirst({
       where: {
+        identifier: normalizedNewEmail,
         verified: false,
         expiresAt: { gte: new Date() },
       },
       orderBy: { createdAt: 'desc' },
-      take: 5,
     });
 
-    const validOtp = recentOtps.find((otp) => otp.code === code);
-    if (!validOtp) {
+    if (!otp) {
+      throw new BadRequestException('کد تایید نامعتبر یا منقضی شده است');
+    }
+    if (otp.attempts >= 3) {
+      throw new BadRequestException('تعداد تلاش‌های ناموفق تمام شد. لطفاً دوباره درخواست کد دهید.');
+    }
+    if (otp.code !== code) {
+      await this.prisma.otpCode.update({
+        where: { id: otp.id },
+        data: { attempts: otp.attempts + 1 },
+      });
       throw new BadRequestException('کد تایید نامعتبر یا منقضی شده است');
     }
 
-    const newEmail = validOtp.identifier;
+    return this.applyEmailChangeWithOtp(userId, user.email, otp.id, otp.identifier);
+  }
 
-    if (user.email === newEmail) {
-      throw new BadRequestException('ایمیل جدید نباید با ایمیل فعلی یکسان باشد');
-    }
-
-    const existingUser = await this.prisma.user.findUnique({ where: { email: newEmail } });
-    if (existingUser) {
-      throw new ConflictException('این ایمیل قبلاً توسط کاربر دیگری استفاده شده است');
-    }
-
-    await this.prisma.otpCode.update({
-      where: { id: validOtp.id },
-      data: { verified: true },
-    });
-
+  /**
+   * اعمال تغییر ایمیل در مسیر dev bypass (بدون OTP — تک write).
+   */
+  private async applyEmailChangeWithoutOtp(
+    userId: string,
+    currentEmail: string | null,
+    newEmail: string,
+  ) {
+    await this.assertEmailChangeable(currentEmail, newEmail);
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: { email: newEmail },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        nationalId: true,
-        role: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: EMAIL_CHANGE_SELECT,
+    });
+    this.logger.log(`✅ Email changed for user ${userId} to ${newEmail}`);
+    return updated;
+  }
+
+  /**
+   * مصرف اتمیک OTP + تغییر ایمیل داخل یک interactive transaction.
+   * مصرف فقط وقتی موفق است که همان OTP هنوز verified=false باشد
+   * (updateMany مشروط)؛ در برابر دو درخواست همزمان فقط یکی موفق
+   * می‌شود و در صورت شکست هر مرحله کل تراکنش rollback می‌شود.
+   */
+  private async applyEmailChangeWithOtp(
+    userId: string,
+    currentEmail: string | null,
+    otpId: string,
+    newEmail: string,
+  ) {
+    await this.assertEmailChangeable(currentEmail, newEmail);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const consumed = await tx.otpCode.updateMany({
+        where: { id: otpId, verified: false },
+        data: { verified: true },
+      });
+      if (consumed.count !== 1) {
+        throw new BadRequestException(
+          'کد تایید قبلاً استفاده شده است. لطفاً دوباره درخواست کد دهید.',
+        );
+      }
+      return tx.user.update({
+        where: { id: userId },
+        data: { email: newEmail },
+        select: EMAIL_CHANGE_SELECT,
+      });
     });
 
     this.logger.log(`✅ Email changed for user ${userId} to ${newEmail}`);
     return updated;
+  }
+
+  /**
+   * بررسی‌های مشترک قبل از تغییر ایمیل (یکسان‌نبودن + تکراری‌نبودن).
+   */
+  private async assertEmailChangeable(currentEmail: string | null, newEmail: string) {
+    if (currentEmail === newEmail) {
+      throw new BadRequestException('ایمیل جدید نباید با ایمیل فعلی یکسان باشد');
+    }
+    const existingUser = await this.prisma.user.findUnique({ where: { email: newEmail } });
+    if (existingUser) {
+      throw new ConflictException('این ایمیل قبلاً توسط کاربر دیگری استفاده شده است');
+    }
   }
 
   /**

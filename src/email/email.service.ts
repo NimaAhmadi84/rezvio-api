@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 
@@ -25,6 +25,10 @@ export class EmailService {
     }
   }
 
+  private isProduction(): boolean {
+    return (this.configService.get<string>('NODE_ENV') ?? process.env.NODE_ENV) === 'production';
+  }
+
   async sendOtpEmail(to: string, code: string, expiresInMinutes: number): Promise<void> {
     const subject = 'کد ورود به رزویو';
     const html = this.buildOtpTemplate(code, expiresInMinutes);
@@ -35,10 +39,19 @@ export class EmailService {
         await this.transporter.sendMail({ from: 'Rezvio <' + from + '>', to, subject, html });
         this.logger.log('✅ ایمیل OTP ارسال شد به: ' + to);
       } catch (error) {
-        this.logger.error('❌ خطا در ارسال: ' + (error as Error).message);
+        // ──── Never log the OTP code in production ────
+        this.logger.error('❌ خطا در ارسال ایمیل OTP به: ' + to + ' — ' + (error as Error).message);
+        if (this.isProduction()) {
+          throw new InternalServerErrorException('خطا در ارسال ایمیل تایید');
+        }
         console.log('[DEV FALLBACK] OTP for ' + to + ': ' + code);
       }
     } else {
+      // ──── No SMTP: dev/test prints to console; production fails closed ────
+      if (this.isProduction()) {
+        this.logger.error('❌ SMTP is not configured (production) — refusing to continue');
+        throw new InternalServerErrorException('سرویس ارسال ایمیل فعال نیست');
+      }
       // Dev Mode: فقط چاپ در console
       console.log('');
       console.log('╔════════════════════════════════════╗');
