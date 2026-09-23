@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, HttpException, HttpStatus, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
@@ -7,8 +7,8 @@ import { AuthService } from '../auth/auth.service';
 
 const OTP_TTL_MINUTES = 5;
 const MAX_ATTEMPTS = 3;
-const MAX_REQUESTS_PER_WINDOW = 3;
-const WINDOW_MINUTES = 15;
+const MAX_REQUESTS_PER_WINDOW = 1; // فقط ۱ درخواست در هر window
+const WINDOW_SECONDS = 120; // ۲ دقیقه (۱۲۰ ثانیه)
 
 // Fixed code accepted ONLY when OTP dev mode is explicitly enabled
 // in an allowlisted environment (development/test).
@@ -86,7 +86,7 @@ export class OtpService {
     const identifier = this.normalize(rawIdentifier);
     const type = this.detectType(identifier);
 
-    const windowStart = new Date(Date.now() - WINDOW_MINUTES * 60000);
+    const windowStart = new Date(Date.now() - WINDOW_SECONDS * 1000);
     const recentRequests = await this.prisma.otpCode.findMany({
       where: { identifier, createdAt: { gte: windowStart } },
       orderBy: { createdAt: 'desc' },
@@ -94,7 +94,7 @@ export class OtpService {
 
     if (recentRequests.length >= MAX_REQUESTS_PER_WINDOW) {
       const oldestRequest = recentRequests[recentRequests.length - 1];
-      const nextAllowedTime = new Date(oldestRequest.createdAt.getTime() + WINDOW_MINUTES * 60000);
+      const nextAllowedTime = new Date(oldestRequest.createdAt.getTime() + WINDOW_SECONDS * 1000);
       const secondsUntilNext = Math.ceil((nextAllowedTime.getTime() - Date.now()) / 1000);
 
       const minutes = Math.floor(secondsUntilNext / 60);
@@ -107,8 +107,13 @@ export class OtpService {
         timeMessage = `${seconds} ثانیه`;
       }
 
-      throw new BadRequestException(
-        `تعداد درخواست‌های شما بیش از حد مجاز است. لطفاً ${timeMessage} دیگر دوباره تلاش کنید.`,
+      // ──── 429 Too Many Requests + retryAfterSeconds در body (برای فرانت‌اند) ────
+      throw new HttpException(
+        {
+          message: `تعداد درخواست‌های شما بیش از حد مجاز است. لطفاً ${timeMessage} دیگر دوباره تلاش کنید.`,
+          retryAfterSeconds: secondsUntilNext,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
