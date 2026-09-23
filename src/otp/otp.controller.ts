@@ -30,6 +30,7 @@ export class OtpController {
       dto.phone,
       dto.email,
       dto.password,
+      dto.rememberMe,
     );
   }
 }

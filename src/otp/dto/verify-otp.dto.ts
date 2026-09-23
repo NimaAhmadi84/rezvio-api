@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEmail, Length, Matches, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsEmail, Length, Matches, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class VerifyOtpDto {
@@ -34,4 +34,9 @@ export class VerifyOtpDto {
   @IsString()
   @MinLength(8, { message: 'رمز عبور باید حداقل ۸ کاراکتر باشد' })
   password?: string;
+
+  @ApiPropertyOptional({ example: false, description: 'اگر true باشد، refresh token برای ۳۰ روز معتبر است (پیش‌فرض: ۱ روز)' })
+  @IsOptional()
+  @IsBoolean({ message: 'rememberMe باید boolean باشد' })
+  rememberMe?: boolean;
 }

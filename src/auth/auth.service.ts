@@ -20,8 +20,9 @@ import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 
 const BCRYPT_SALT_ROUNDS = 10;
-const ACCESS_TOKEN_EXPIRES = 900;
-const REFRESH_TOKEN_EXPIRES = 604800;
+const ACCESS_TOKEN_EXPIRES = 900; // 15 minutes (ثابت)
+const REFRESH_TOKEN_EXPIRES_SHORT = 86400; // 1 day (rememberMe=false)
+const REFRESH_TOKEN_EXPIRES_LONG = 2592000; // 30 days (rememberMe=true)
 
 @Injectable()
 export class AuthService {
@@ -89,7 +90,7 @@ export class AuthService {
     }
   }
 
-  async loginWithPassword(identifier: string, password: string): Promise<AuthResponseDto> {
+  async loginWithPassword(identifier: string, password: string, rememberMe: boolean = false): Promise<AuthResponseDto> {
     const user = await this.usersService.findByEmailOrPhone(identifier);
     if (!user || !user.password) {
       throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
@@ -98,7 +99,7 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
     }
-    return this.generateTokens(this.toAuthUserDto(user));
+    return this.generateTokens(this.toAuthUserDto(user), rememberMe);
   }
 
   /**
@@ -115,6 +116,7 @@ export class AuthService {
     phone?: string,
     email?: string,
     password?: string,
+    rememberMe: boolean = false,
   ): Promise<AuthResponseDto & { isNew: boolean }> {
     const isEmail = identifier.includes('@');
     
@@ -140,18 +142,22 @@ export class AuthService {
       this.logger.log(`🆕 کاربر جدید ثبت‌نام شد: ${identifier} | Phone: ${phone || 'N/A'}`);
     }
 
-    const response = await this.generateTokens(this.toAuthUserDto(user));
+    const response = await this.generateTokens(this.toAuthUserDto(user), rememberMe);
     return { ...response, isNew };
   }
 
-  private async generateTokens(user: AuthUserDto): Promise<AuthResponseDto> {
+  private async generateTokens(user: AuthUserDto, rememberMe: boolean = false): Promise<AuthResponseDto> {
     const payload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
     const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET');
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
     if (!accessSecret || !refreshSecret) throw new Error('JWT secrets are not configured');
+    
+    // ──── Remember Me: 30 days if true, 1 day if false ────
+    const refreshExpires = rememberMe ? REFRESH_TOKEN_EXPIRES_LONG : REFRESH_TOKEN_EXPIRES_SHORT;
+    
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, { secret: accessSecret, expiresIn: ACCESS_TOKEN_EXPIRES }),
-      this.jwtService.signAsync(payload, { secret: refreshSecret, expiresIn: REFRESH_TOKEN_EXPIRES }),
+      this.jwtService.signAsync(payload, { secret: refreshSecret, expiresIn: refreshExpires }),
     ]);
     return { accessToken, refreshToken, user };
   }
@@ -185,7 +191,7 @@ export class AuthService {
     firstName: string;
     lastName: string;
     picture?: string;
-  }): Promise<{ accessToken: string; refreshToken: string; user: any }> {
+  }, rememberMe: boolean = false): Promise<{ accessToken: string; refreshToken: string; user: any }> {
     // پیدا کردن کاربر با ایمیل
     const user = await this.usersService.findByEmailOrPhone(googleUser.email);
 
@@ -208,6 +214,9 @@ export class AuthService {
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
     if (!accessSecret || !refreshSecret) throw new Error('JWT secrets are not configured');
 
+    // ──── Remember Me: 30 days if true, 1 day if false ────
+    const refreshExpires = rememberMe ? REFRESH_TOKEN_EXPIRES_LONG : REFRESH_TOKEN_EXPIRES_SHORT;
+
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: accessSecret,
@@ -215,7 +224,7 @@ export class AuthService {
       }),
       this.jwtService.signAsync(payload, {
         secret: refreshSecret,
-        expiresIn: REFRESH_TOKEN_EXPIRES, // 604800 seconds (7 days)
+        expiresIn: refreshExpires,
       }),
     ]);
 

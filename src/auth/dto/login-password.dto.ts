@@ -1,5 +1,5 @@
-import { IsString, MinLength, MaxLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsOptional, IsBoolean, MinLength, MaxLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class LoginPasswordDto {
   @ApiProperty({ example: 'user@example.com', description: 'ایمیل یا شماره تماس' })
@@ -12,4 +12,9 @@ export class LoginPasswordDto {
   @MinLength(8, { message: 'رمز باید حداقل ۸ کاراکتر باشد' })
   @MaxLength(128)
   password!: string;
+
+  @ApiPropertyOptional({ example: false, description: 'اگر true باشد، refresh token برای ۳۰ روز معتبر است (پیش‌فرض: ۱ روز)' })
+  @IsOptional()
+  @IsBoolean({ message: 'rememberMe باید boolean باشد' })
+  rememberMe?: boolean;
 }

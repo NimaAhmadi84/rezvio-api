@@ -133,7 +133,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'ورود موفق', type: AuthResponseDto })
   @ApiResponse({ status: 401, description: 'شناسه یا رمز اشتباه' })
   async loginWithPassword(@Body() dto: LoginPasswordDto): Promise<AuthResponseDto> {
-    return this.authService.loginWithPassword(dto.identifier, dto.password);
+    return this.authService.loginWithPassword(dto.identifier, dto.password, dto.rememberMe);
   }
 
   @Get('admin-only')

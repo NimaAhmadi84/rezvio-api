@@ -133,6 +133,7 @@ export class OtpService {
     phone?: string,
     email?: string,
     password?: string,
+    rememberMe: boolean = false,
   ): Promise<any> {
     const identifier = this.normalize(rawIdentifier);
 
@@ -140,7 +141,7 @@ export class OtpService {
     // Active only when OTP_DEV_MODE=true AND NODE_ENV is development/test.
     if (this.isDevBypassCode(code)) {
       this.logger.warn(`DEV OTP bypass used for ${identifier} (development/test only)`);
-      const result = await this.authService.loginOrCreate(identifier, name, phone, email, password);
+      const result = await this.authService.loginOrCreate(identifier, name, phone, email, password, rememberMe);
       return { ...result, otpVerified: true };
     }
 
@@ -163,7 +164,7 @@ export class OtpService {
 
     await this.prisma.otpCode.update({ where: { id: otp.id }, data: { verified: true } });
 
-    const result = await this.authService.loginOrCreate(identifier, name, phone, email, password);
+    const result = await this.authService.loginOrCreate(identifier, name, phone, email, password, rememberMe);
     return { ...result, otpVerified: true };
   }
 }
