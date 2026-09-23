@@ -10,7 +10,11 @@ import {
   HttpStatus,
   Request,
   Get,
+  Res,
+  Req,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -21,6 +25,7 @@ import { Throttle } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service';
 import { OtpService } from '../otp/otp.service';
+import { ConfigService } from '@nestjs/config';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -43,6 +48,7 @@ export class AuthController {
     private readonly authService: AuthService,
     @Inject(forwardRef(() => OtpService))
     private readonly otpService: OtpService,
+    private readonly configService: ConfigService,
   ) {}
 
   private readonly logger = new Logger(AuthController.name);
@@ -166,5 +172,35 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'کد نامعتبر یا منقضی شده' })
   async resetPassword(@Body() dto: ResetPasswordDto): Promise<{ message: string }> {
     return this.authService.resetPassword(dto.identifier, dto.code, dto.password);
+  }
+
+  // ──── Google OAuth (Login Only — نه Register) ────
+
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({ summary: 'شروع ورود با Google OAuth' })
+  async googleAuth(@Req() req) {
+    // Guard redirects to Google
+  }
+
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({ summary: 'Callback از Google OAuth' })
+  async googleAuthRedirect(@Req() req, @Res() res: Response) {
+    try {
+      const result = await this.authService.loginWithGoogle(req.user);
+      
+      // Redirect به فرانت‌اند با tokens در query params
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+      const redirectUrl = `${frontendUrl}/auth?google=success&accessToken=${result.accessToken}&refreshToken=${result.refreshToken}`;
+      
+      return res.redirect(redirectUrl);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'خطا در ورود با Google';
+      this.logger.error(`Google OAuth failed: ${errorMessage}`);
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+      const encodedMessage = encodeURIComponent(errorMessage);
+      return res.redirect(`${frontendUrl}/auth?google=error&message=${encodedMessage}`);
+    }
   }
 }

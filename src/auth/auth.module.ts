@@ -9,6 +9,7 @@ import { UsersModule } from '../users/users.module';
 import { OtpModule } from '../otp/otp.module';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -36,6 +37,7 @@ const ACCESS_TOKEN_EXPIRES = 900; // 15 minutes (seconds)
     AuthService,
     LocalStrategy,
     JwtStrategy,
+    GoogleStrategy,
     JwtAuthGuard,
     LocalAuthGuard,
     RolesGuard,

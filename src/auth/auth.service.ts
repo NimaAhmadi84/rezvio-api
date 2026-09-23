@@ -177,6 +177,61 @@ export class AuthService {
    * بازیابی رمز عبور با OTP — Account Enumeration Protection:
    * همیشه پیام یکسان برمی‌گرداند حتی اگر کاربر وجود نداشته باشد.
    */
+  // ──── Google OAuth Login (فقط برای کاربران موجود — نه Register) ────
+
+  async loginWithGoogle(googleUser: {
+    googleId: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    picture?: string;
+  }): Promise<{ accessToken: string; refreshToken: string; user: any }> {
+    // پیدا کردن کاربر با ایمیل
+    const user = await this.usersService.findByEmailOrPhone(googleUser.email);
+
+    if (!user) {
+      // کاربر وجود ندارد — فقط login مجاز است، نه register
+      throw new UnauthorizedException(
+        'این ایمیل در Rezvio ثبت نشده است. اگر حساب دارید، لطفاً ابتدا در پروفایل خود ایمیل اضافه کنید، سپس با Google وارد شوید.',
+      );
+    }
+
+    // تولید JWT tokens (با همان constants که generateTokens استفاده می‌کند)
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+    };
+
+    const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET');
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
+    if (!accessSecret || !refreshSecret) throw new Error('JWT secrets are not configured');
+
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwtService.signAsync(payload, {
+        secret: accessSecret,
+        expiresIn: ACCESS_TOKEN_EXPIRES, // 900 seconds (15 min)
+      }),
+      this.jwtService.signAsync(payload, {
+        secret: refreshSecret,
+        expiresIn: REFRESH_TOKEN_EXPIRES, // 604800 seconds (7 days)
+      }),
+    ]);
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+      },
+    };
+  }
+
   async resetPassword(identifier: string, code: string, newPassword: string): Promise<{ message: string }> {
     const normalizedIdentifier = identifier.trim().toLowerCase();
     const user = await this.usersService.findByEmailOrPhone(normalizedIdentifier);
