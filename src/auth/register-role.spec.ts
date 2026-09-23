@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { OtpService } from '../otp/otp.service';
 
 describe('AuthService.register role hardening (Phase A)', () => {
   let authService: AuthService;
@@ -39,6 +41,17 @@ describe('AuthService.register role hardening (Phase A)', () => {
               return undefined;
             }),
           },
+        },
+        {
+          provide: PrismaService,
+          useValue: {
+            otpCode: { findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+            $transaction: jest.fn((fn) => fn({ otpCode: { updateMany: jest.fn() }, user: { update: jest.fn() } })),
+          },
+        },
+        {
+          provide: OtpService,
+          useValue: { request: jest.fn(), isDevBypassCode: jest.fn().mockReturnValue(false) },
         },
       ],
     }).compile();

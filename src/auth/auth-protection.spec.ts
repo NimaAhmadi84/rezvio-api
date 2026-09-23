@@ -6,6 +6,8 @@ import * as bcrypt from 'bcryptjs';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { UsersService } from '../users/users.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { OtpService } from '../otp/otp.service';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 
 describe('Auth protection (Phase A)', () => {
@@ -36,6 +38,17 @@ describe('Auth protection (Phase A)', () => {
               return undefined;
             }),
           },
+        },
+        {
+          provide: PrismaService,
+          useValue: {
+            otpCode: { findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+            $transaction: jest.fn((fn) => fn({ otpCode: { updateMany: jest.fn() }, user: { update: jest.fn() } })),
+          },
+        },
+        {
+          provide: OtpService,
+          useValue: { request: jest.fn(), isDevBypassCode: jest.fn().mockReturnValue(false) },
         },
       ],
     }).compile();
