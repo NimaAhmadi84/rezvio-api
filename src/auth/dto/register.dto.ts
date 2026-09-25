@@ -1,5 +1,5 @@
 import { IsEmail, IsEnum, IsString, IsOptional, MinLength, MaxLength, Matches } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
 // نام باید یک‌دست باشد: کاملاً فارسی یا کاملاً انگلیسی (ترکیبی ممنوع)
@@ -55,4 +55,9 @@ export class RegisterDto {
   @IsOptional()
   @IsEnum(UserRole, { message: 'نقش انتخابی نامعتبر است' })
   role?: UserRole;
+
+  @ApiPropertyOptional({ description: 'توکن hCaptcha برای جلوگیری از ربات‌ها' })
+  @IsOptional()
+  @IsString({ message: 'کد امنیتی باید رشته باشد' })
+  captchaToken?: string;
 }

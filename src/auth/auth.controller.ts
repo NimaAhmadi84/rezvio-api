@@ -26,6 +26,7 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { OtpService } from '../otp/otp.service';
 import { ConfigService } from '@nestjs/config';
+import { HcaptchaService } from '../common/services/hcaptcha.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -49,6 +50,7 @@ export class AuthController {
     @Inject(forwardRef(() => OtpService))
     private readonly otpService: OtpService,
     private readonly configService: ConfigService,
+    private readonly hcaptchaService: HcaptchaService,
   ) {}
 
   private readonly logger = new Logger(AuthController.name);
@@ -63,7 +65,11 @@ export class AuthController {
     type: AuthResponseDto,
   })
   @ApiResponse({ status: 409, description: 'ایمیل تکراری' })
-  async register(@Body() dto: RegisterDto): Promise<AuthResponseDto> {
+  async register(@Body() dto: RegisterDto, @Req() req: any): Promise<AuthResponseDto> {
+    // ──── Verify hCaptcha before processing registration ────
+    const clientIp = req.ip || req.connection?.remoteAddress;
+    await this.hcaptchaService.verifyToken(dto.captchaToken, clientIp);
+    
     return this.authService.register(dto);
   }
 
@@ -155,7 +161,11 @@ export class AuthController {
   @Throttle({ otp: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: 'درخواست بازیابی رمز عبور (ارسال OTP)' })
   @ApiResponse({ status: 200, description: 'درخواست ثبت شد (پیام یکسان برای جلوگیری از Account Enumeration)' })
-  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<{ message: string }> {
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: any): Promise<{ message: string }> {
+    // ──── Verify hCaptcha before sending OTP ────
+    const clientIp = req.ip || req.connection?.remoteAddress;
+    await this.hcaptchaService.verifyToken(dto.captchaToken, clientIp);
+    
     try {
       await this.otpService.request(dto.identifier);
     } catch (e) {

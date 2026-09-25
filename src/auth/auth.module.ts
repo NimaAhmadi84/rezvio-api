@@ -13,6 +13,7 @@ import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { HcaptchaService } from '../common/services/hcaptcha.service';
 
 const ACCESS_TOKEN_EXPIRES = 900; // 15 minutes (seconds)
 
@@ -38,6 +39,7 @@ const ACCESS_TOKEN_EXPIRES = 900; // 15 minutes (seconds)
     LocalStrategy,
     JwtStrategy,
     GoogleStrategy,
+    HcaptchaService,
     JwtAuthGuard,
     LocalAuthGuard,
     RolesGuard,

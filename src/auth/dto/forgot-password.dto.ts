@@ -1,5 +1,5 @@
-import { IsString, MinLength, MaxLength, Matches } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsOptional, MinLength, MaxLength, Matches } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ForgotPasswordDto {
   @ApiProperty({
@@ -10,4 +10,9 @@ export class ForgotPasswordDto {
   @MinLength(3, { message: 'شناسه بیش از حد کوتاه است' })
   @MaxLength(254, { message: 'شناسه بیش از حد طولانی است' })
   identifier!: string;
+
+  @ApiPropertyOptional({ description: 'توکن hCaptcha برای جلوگیری از ربات‌ها' })
+  @IsOptional()
+  @IsString({ message: 'کد امنیتی باید رشته باشد' })
+  captchaToken?: string;
 }
