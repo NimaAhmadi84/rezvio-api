@@ -15,6 +15,7 @@ import { UserRole } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../otp/otp.service';
+import { SessionService } from './session.service';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
@@ -36,6 +37,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => OtpService))
     private readonly otpService: OtpService,
+    @Inject(forwardRef(() => SessionService))
+    private readonly sessionService: SessionService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<AuthUserDto | null> {
@@ -90,7 +93,13 @@ export class AuthService {
     }
   }
 
-  async loginWithPassword(identifier: string, password: string, rememberMe: boolean = false): Promise<AuthResponseDto> {
+  async loginWithPassword(
+    identifier: string,
+    password: string,
+    rememberMe: boolean = false,
+    userAgent?: string,
+    ip?: string,
+  ): Promise<AuthResponseDto & { sessionId?: string }> {
     const user = await this.usersService.findByEmailOrPhone(identifier);
     if (!user || !user.password) {
       throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
@@ -99,7 +108,7 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
     }
-    return this.generateTokens(this.toAuthUserDto(user), rememberMe);
+    return this.generateTokens(this.toAuthUserDto(user), rememberMe, userAgent, ip);
   }
 
   /**
@@ -117,7 +126,9 @@ export class AuthService {
     email?: string,
     password?: string,
     rememberMe: boolean = false,
-  ): Promise<AuthResponseDto & { isNew: boolean }> {
+    userAgent?: string,
+    ip?: string,
+  ): Promise<AuthResponseDto & { isNew: boolean; sessionId?: string }> {
     const isEmail = identifier.includes('@');
     
     if (!isEmail) {
@@ -142,24 +153,48 @@ export class AuthService {
       this.logger.log(`🆕 کاربر جدید ثبت‌نام شد: ${identifier} | Phone: ${phone || 'N/A'}`);
     }
 
-    const response = await this.generateTokens(this.toAuthUserDto(user), rememberMe);
+    const response = await this.generateTokens(this.toAuthUserDto(user), rememberMe, userAgent, ip);
     return { ...response, isNew };
   }
 
-  private async generateTokens(user: AuthUserDto, rememberMe: boolean = false): Promise<AuthResponseDto> {
+  private async generateTokens(
+    user: AuthUserDto,
+    rememberMe: boolean = false,
+    userAgent?: string,
+    ip?: string,
+  ): Promise<AuthResponseDto & { sessionId?: string }> {
     const payload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
     const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET');
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
     if (!accessSecret || !refreshSecret) throw new Error('JWT secrets are not configured');
-    
+
     // ──── Remember Me: 30 days if true, 1 day if false ────
     const refreshExpires = rememberMe ? REFRESH_TOKEN_EXPIRES_LONG : REFRESH_TOKEN_EXPIRES_SHORT;
-    
+
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, { secret: accessSecret, expiresIn: ACCESS_TOKEN_EXPIRES }),
       this.jwtService.signAsync(payload, { secret: refreshSecret, expiresIn: refreshExpires }),
     ]);
-    return { accessToken, refreshToken, user };
+
+    // ──── Phase 10D: Create UserSession record ────
+    let sessionId: string | undefined;
+    if (userAgent && ip) {
+      try {
+        const expiresAt = new Date(Date.now() + refreshExpires * 1000);
+        sessionId = await this.sessionService.createSession(
+          user.id,
+          refreshToken,
+          userAgent,
+          ip,
+          expiresAt,
+        );
+      } catch (error) {
+        this.logger.warn(`Failed to create session: ${(error as Error).message}`);
+        // Session creation failure should NOT block login
+      }
+    }
+
+    return { accessToken, refreshToken, user, sessionId };
   }
 
   private toAuthUserDto(user: {
@@ -191,7 +226,7 @@ export class AuthService {
     firstName: string;
     lastName: string;
     picture?: string;
-  }, rememberMe: boolean = false): Promise<{ accessToken: string; refreshToken: string; user: any }> {
+  }, rememberMe: boolean = false, userAgent?: string, ip?: string): Promise<{ accessToken: string; refreshToken: string; user: any; sessionId?: string }> {
     // پیدا کردن کاربر با ایمیل
     const user = await this.usersService.findByEmailOrPhone(googleUser.email);
 
@@ -228,6 +263,23 @@ export class AuthService {
       }),
     ]);
 
+    // ──── Phase 10D: Create UserSession record ────
+    let sessionId: string | undefined;
+    if (userAgent && ip) {
+      try {
+        const expiresAt = new Date(Date.now() + refreshExpires * 1000);
+        sessionId = await this.sessionService.createSession(
+          user.id,
+          refreshToken,
+          userAgent,
+          ip,
+          expiresAt,
+        );
+      } catch (error) {
+        this.logger.warn(`Failed to create Google session: ${(error as Error).message}`);
+      }
+    }
+
     return {
       accessToken,
       refreshToken,
@@ -238,6 +290,7 @@ export class AuthService {
         phone: user.phone,
         role: user.role,
       },
+      sessionId,
     };
   }
 

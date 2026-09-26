@@ -14,6 +14,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { HcaptchaService } from '../common/services/hcaptcha.service';
+import { SessionService } from './session.service';
 
 const ACCESS_TOKEN_EXPIRES = 900; // 15 minutes (seconds)
 
@@ -35,6 +36,7 @@ const ACCESS_TOKEN_EXPIRES = 900; // 15 minutes (seconds)
   ],
   controllers: [AuthController],
   providers: [
+    SessionService,
     AuthService,
     LocalStrategy,
     JwtStrategy,
@@ -44,6 +46,6 @@ const ACCESS_TOKEN_EXPIRES = 900; // 15 minutes (seconds)
     LocalAuthGuard,
     RolesGuard,
   ],
-  exports: [AuthService, JwtAuthGuard, RolesGuard],
+  exports: [AuthService, SessionService, JwtAuthGuard, RolesGuard],
 })
 export class AuthModule {}
