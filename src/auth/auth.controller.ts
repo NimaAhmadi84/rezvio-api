@@ -10,6 +10,9 @@ import {
   HttpStatus,
   Request,
   Get,
+  Delete,
+  Param,
+  ParseUUIDPipe,
   Res,
   Req,
 } from '@nestjs/common';
@@ -27,6 +30,7 @@ import { AuthService } from './auth.service';
 import { OtpService } from '../otp/otp.service';
 import { ConfigService } from '@nestjs/config';
 import { HcaptchaService } from '../common/services/hcaptcha.service';
+import { SessionService } from './session.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -51,6 +55,7 @@ export class AuthController {
     private readonly otpService: OtpService,
     private readonly configService: ConfigService,
     private readonly hcaptchaService: HcaptchaService,
+    private readonly sessionService: SessionService,
   ) {}
 
   private readonly logger = new Logger(AuthController.name);
@@ -138,8 +143,10 @@ export class AuthController {
   @ApiOperation({ summary: 'ورود با رمز عبور' })
   @ApiResponse({ status: 200, description: 'ورود موفق', type: AuthResponseDto })
   @ApiResponse({ status: 401, description: 'شناسه یا رمز اشتباه' })
-  async loginWithPassword(@Body() dto: LoginPasswordDto): Promise<AuthResponseDto> {
-    return this.authService.loginWithPassword(dto.identifier, dto.password, dto.rememberMe);
+  async loginWithPassword(@Body() dto: LoginPasswordDto, @Req() req: any): Promise<AuthResponseDto & { sessionId?: string }> {
+    const userAgent = req.headers['user-agent'] || '';
+    const ip = req.ip || req.connection?.remoteAddress || '';
+    return this.authService.loginWithPassword(dto.identifier, dto.password, dto.rememberMe, userAgent, ip);
   }
 
   @Get('admin-only')
@@ -184,6 +191,51 @@ export class AuthController {
     return this.authService.resetPassword(dto.identifier, dto.code, dto.password);
   }
 
+  // ──── Phase 10D: Login History / Active Sessions ────
+
+  @Get('sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'لیست دستگاه‌های فعال (sessions)' })
+  @ApiResponse({ status: 200, description: 'لیست sessions فعال' })
+  async getSessions(@CurrentUser() user: any, @Req() req: any) {
+    // ──── Current session ID from custom header (sent by frontend) ────
+    const currentSessionId = req.headers['x-current-session-id'] as string | undefined;
+    return this.sessionService.getActiveSessions(user.id, currentSessionId);
+  }
+
+  @Delete('sessions/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'خروج از یک دستگاه خاص' })
+  @ApiResponse({ status: 200, description: 'Session با موفقیت حذف شد' })
+  @ApiResponse({ status: 403, description: 'دسترسی غیرمجاز' })
+  @ApiResponse({ status: 404, description: 'Session یافت نشد' })
+  async revokeSession(
+    @CurrentUser() user: any,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<{ message: string }> {
+    await this.sessionService.revokeSession(user.id, id);
+    return { message: 'این دستگاه با موفقیت خارج شد' };
+  }
+
+  @Delete('sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'خروج از همه دستگاه‌ها (جز دستگاه فعلی)' })
+  @ApiResponse({ status: 200, description: 'همه sessions حذف شدند' })
+  async revokeAllSessions(
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ): Promise<{ message: string; count: number }> {
+    // ──── Current session ID from custom header (sent by frontend) ────
+    const currentSessionId = req.headers['x-current-session-id'] as string | undefined;
+    const count = await this.sessionService.revokeAllSessions(user.id, currentSessionId);
+    return { message: `از ${count} دستگاه دیگر خارج شدید`, count };
+  }
+
   // ──── Google OAuth (Login Only — نه Register) ────
 
   @Get('google')
@@ -198,11 +250,14 @@ export class AuthController {
   @ApiOperation({ summary: 'Callback از Google OAuth' })
   async googleAuthRedirect(@Req() req, @Res() res: Response) {
     try {
-      const result = await this.authService.loginWithGoogle(req.user);
+      const userAgent = req.headers['user-agent'] || '';
+      const ip = req.ip || req.connection?.remoteAddress || '';
+      const result = await this.authService.loginWithGoogle(req.user, false, userAgent, ip);
       
       // Redirect به فرانت‌اند با tokens در query params
       const frontendUrl = this.configService.get<string>('FRONTEND_URL');
-      const redirectUrl = `${frontendUrl}/auth?google=success&accessToken=${result.accessToken}&refreshToken=${result.refreshToken}`;
+      const sessionIdParam = result.sessionId ? `&sessionId=${result.sessionId}` : '';
+      const redirectUrl = `${frontendUrl}/auth?google=success&accessToken=${result.accessToken}&refreshToken=${result.refreshToken}${sessionIdParam}`;
       
       return res.redirect(redirectUrl);
     } catch (error) {

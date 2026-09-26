@@ -52,6 +52,7 @@ model User {
   businessLikes   BusinessLike[]
   reviews         BusinessReview[]
   reviewVotes     ReviewVote[]
+  sessions        UserSession[]    // ← NEW: Login history / Active sessions
 
   @@map("users")
 }
@@ -356,4 +357,37 @@ model StaffDateBreak {
 
   @@index([staffId, date])
   @@map("staff_date_breaks")
+}
+// ──── Phase 10D: Login History / Active Sessions ────
+model UserSession {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ──── Token tracking (hash نه خود token برای امنیت) ────
+  refreshTokenHash String   @unique
+
+  // ──── Device info (از ua-parser-js) ────
+  deviceName       String   // "Chrome on Windows", "Safari on iPhone"
+  deviceType       String   // "desktop", "mobile", "tablet"
+  browser          String?  // "Chrome", "Safari", "Firefox"
+  os               String?  // "Windows", "macOS", "iOS", "Android"
+
+  // ──── Network info ────
+  ipAddress        String   // "185.23.45.67"
+  country          String?  // "Iran"
+  city             String?  // "Tehran"
+
+  // ──── Timestamps ────
+  createdAt        DateTime @default(now())
+  lastActiveAt     DateTime @default(now())
+  expiresAt        DateTime // when refresh token expires
+
+  // ──── Status ────
+  isActive         Boolean  @default(true)
+
+  @@index([userId])
+  @@index([lastActiveAt])
+  @@index([expiresAt])
+  @@map("user_sessions")
 }
