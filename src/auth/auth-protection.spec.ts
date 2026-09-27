@@ -8,6 +8,7 @@ import { AuthController } from './auth.controller';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../otp/otp.service';
+import { SessionService } from './session.service';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 
 describe('Auth protection (Phase A)', () => {
@@ -49,6 +50,20 @@ describe('Auth protection (Phase A)', () => {
         {
           provide: OtpService,
           useValue: { request: jest.fn(), isDevBypassCode: jest.fn().mockReturnValue(false) },
+        },
+        {
+          provide: SessionService,
+          useValue: {
+            createSession: jest.fn(),
+            countActiveSessions: jest.fn().mockResolvedValue(0),
+            replaceSessionInPlace: jest.fn().mockResolvedValue(false),
+            issuePendingLoginToken: jest.fn().mockResolvedValue('pending-token'),
+            verifyPendingLoginToken: jest.fn(),
+            consumePendingLoginToken: jest.fn(),
+            validateForRefresh: jest.fn().mockResolvedValue({ valid: true }),
+            touchLastActive: jest.fn(),
+            getActiveSessions: jest.fn().mockResolvedValue([]),
+          },
         },
       ],
     }).compile();
@@ -98,7 +113,16 @@ describe('Auth protection (Phase A)', () => {
       });
 
     const otpServiceMock = { request: jest.fn(), isDevBypassCode: jest.fn().mockReturnValue(false) } as any;
-    const controller = new AuthController(authService, otpServiceMock);
+    const configServiceMock = { get: jest.fn() } as any;
+    const hcaptchaServiceMock = { verifyToken: jest.fn() } as any;
+    const sessionServiceMock = { getActiveSessions: jest.fn().mockResolvedValue([]) } as any;
+    const controller = new AuthController(
+      authService,
+      otpServiceMock,
+      configServiceMock,
+      hcaptchaServiceMock,
+      sessionServiceMock,
+    );
 
     type CheckIdentifierInput = Parameters<
       AuthController['checkIdentifier']
