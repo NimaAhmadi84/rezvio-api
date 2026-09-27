@@ -1,9 +1,33 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+  Inject,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import * as bcrypt from 'bcryptjs';
 import { UAParser } from 'ua-parser-js';
 import axios from 'axios';
+import { JwtService } from '@nestjs/jwt';
+import { randomUUID, createHash } from 'node:crypto';
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 10D+: سقف دستگاه‌های فعال همزمان برای هر کاربر
+// (الگوی Adobe: کاربر خودش انتخاب می‌کند کدام دستگاه بیرون برود)
+// ═══════════════════════════════════════════════════════════════
+export const MAX_ACTIVE_SESSIONS = 3;
+
+// ──── فاصله‌ی حداقلی بین دو آپدیت lastActiveAt (cache-guard — طبق §8) ────
+const LAST_ACTIVE_TOUCH_TTL_MS = 5 * 60 * 1000; // ۵ دقیقه
+
+// ──── pendingToken: توکن موقت ادامه‌ی لاگین بعد از رفع سقف دستگاه ────
+// ۵ دقیقه اعتبار + single-use (jti در cache) + قفل به همان مرورگر (ua fingerprint)
+const PENDING_LOGIN_TTL_SECONDS = 300;
+const PENDING_LOGIN_TTL_MS = PENDING_LOGIN_TTL_SECONDS * 1000;
 
 export interface DeviceInfo {
   deviceName: string;
@@ -33,6 +57,8 @@ export class SessionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly jwtService: JwtService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
 
   // ──── Hash refresh token برای ذخیره امن در DB ────
@@ -122,8 +148,210 @@ export class SessionService {
     return session.id;
   }
 
+  // ════════════════ Phase 10D+ — Device Limit ════════════════
+
+  // ──── شمارش sessionهای فعال کاربر (مبنای سقف دستگاه) ────
+  // فقط isActive=true و منقضی‌نشده شمرده می‌شوند — سشن مرده سهمیه اشغال نمی‌کند
+  async countActiveSessions(userId: string): Promise<number> {
+    return this.prisma.userSession.count({
+      where: {
+        userId,
+        isActive: true,
+        expiresAt: { gt: new Date() },
+      },
+    });
+  }
+
+  // ──── جایگزینی درجای session (لاگین مجدد از همان مرورگر) ────
+  // به‌جای ساخت سشن جدید، همان ردیف آپدیت می‌شود:
+  // → id ثابت می‌ماند، سهمیه‌ی ۳ دستگاه مصرف نمی‌شود، localStorage دست‌نخورده می‌ماند
+  async replaceSessionInPlace(
+    sessionId: string,
+    userId: string,
+    refreshToken: string,
+    userAgent: string,
+    ip: string,
+    expiresAt: Date,
+  ): Promise<boolean> {
+    const session = await this.prisma.userSession.findUnique({
+      where: { id: sessionId },
+    });
+
+    // سشن باید فعال، منقضی‌نشده و متعلق به همین کاربر باشد
+    // (مرورگر مشترک: session-id کاربر قبلی هرگز جایگزین نمی‌شود)
+    if (
+      !session ||
+      !session.isActive ||
+      session.expiresAt <= new Date() ||
+      session.userId !== userId
+    ) {
+      return false;
+    }
+
+    const deviceInfo = this.parseDevice(userAgent);
+    const geo = await this.getGeoLocation(ip);
+
+    await this.prisma.userSession.update({
+      where: { id: sessionId },
+      data: {
+        refreshTokenHash: this.hashToken(refreshToken),
+        expiresAt,
+        lastActiveAt: new Date(),
+        ipAddress: ip,
+        country: geo.country,
+        city: geo.city,
+        deviceName: deviceInfo.deviceName,
+        deviceType: deviceInfo.deviceType,
+        browser: deviceInfo.browser,
+        os: deviceInfo.os,
+      },
+    });
+
+    this.logger.debug(`🔄 Session ${sessionId} replaced in-place for user ${userId}`);
+    return true;
+  }
+
+  // ──── اعتبارسنجی session هنگام refresh ────
+  // اینجا revoke «واقعاً» اعمال می‌شود: سشن غیرفعال/منقضی/غیرمالک
+  // یا با هش ناهمخوان → refresh مردود → فرانت logout می‌کند
+  async validateForRefresh(
+    sessionId: string,
+    userId: string,
+    refreshToken: string,
+  ): Promise<{
+    valid: boolean;
+    reason?: 'NOT_FOUND' | 'INACTIVE' | 'EXPIRED' | 'OWNERSHIP' | 'HASH_MISMATCH';
+  }> {
+    const session = await this.prisma.userSession.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) return { valid: false, reason: 'NOT_FOUND' };
+    if (!session.isActive) return { valid: false, reason: 'INACTIVE' };
+    if (session.expiresAt <= new Date()) return { valid: false, reason: 'EXPIRED' };
+    if (session.userId !== userId) return { valid: false, reason: 'OWNERSHIP' };
+    if (!this.verifyTokenHash(refreshToken, session.refreshTokenHash)) {
+      return { valid: false, reason: 'HASH_MISMATCH' };
+    }
+    return { valid: true };
+  }
+
+  // ──── آپدیت lastActiveAt با cache-guard ────
+  // حداکثر هر ۵ دقیقه یک DB write برای هر سشن (عملکرد — طبق §8)
+  // هیچ‌وقت خطا پرتاب نمی‌کند تا refresh را نشکند
+  async touchLastActive(sessionId: string): Promise<void> {
+    try {
+      const cacheKey = `session-touch:${sessionId}`;
+      const touched = await this.cacheManager.get(cacheKey);
+      if (touched) return;
+
+      await this.cacheManager.set(cacheKey, '1', LAST_ACTIVE_TOUCH_TTL_MS);
+      await this.prisma.userSession.updateMany({
+        where: { id: sessionId, isActive: true },
+        data: { lastActiveAt: new Date() },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `touchLastActive failed for session ${sessionId}: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ════════════════ pendingToken — ادامه‌ی لاگین پس از رفع سقف ════════════════
+  //
+  // سناریو: کاربر با دستگاه چهارم لاگین می‌کند → 409 با pendingToken →
+  // او در پروفایلِ ویزارد یکی از ۳ دستگاه را revoke می‌کند → با pendingToken
+  // لاگین «بدون تکرار رمز» کامل می‌شود.
+  //
+  // امنیت:
+  //  - امضا با JWT_REFRESH_SECRET اما با type='pending-login' (جدا از refresh token)
+  //  - single-use: jti در cache ذخیره و هنگام consume حذف می‌شود
+  //  - قفل به مرورگر: fingerprint از User-Agent (سرقت توکن به دستگاه دیگر بی‌فایده است)
+  //  - ۵ دقیقه انقضا
+
+  private uaFingerprint(userAgent?: string): string {
+    return createHash('sha256').update(userAgent || '').digest('hex').substring(0, 32);
+  }
+
+  /** صدور pendingToken برای ادامه‌ی لاگین پس از رفع سقف دستگاه */
+  async issuePendingLoginToken(
+    userId: string,
+    rememberMe: boolean,
+    userAgent?: string,
+  ): Promise<string> {
+    const jti = randomUUID();
+    const payload = {
+      sub: userId,
+      rememberMe,
+      type: 'pending-login',
+      jti,
+      ua: this.uaFingerprint(userAgent),
+    };
+    const secret = this.configService.get<string>('JWT_REFRESH_SECRET');
+    if (!secret) throw new Error('JWT_REFRESH_SECRET is not configured');
+
+    const token = await this.jwtService.signAsync(payload, {
+      secret,
+      expiresIn: PENDING_LOGIN_TTL_SECONDS,
+    });
+    await this.cacheManager.set(`pending-login:${jti}`, '1', PENDING_LOGIN_TTL_MS);
+    return token;
+  }
+
+  /** بررسی pendingToken بدون مصرف (peek — برای لیست دستگاه‌ها در ویزارد) */
+  async verifyPendingLoginToken(
+    token: string,
+    userAgent?: string,
+  ): Promise<{ userId: string; rememberMe: boolean } | null> {
+    try {
+      const secret = this.configService.get<string>('JWT_REFRESH_SECRET');
+      if (!secret) return null;
+
+      const payload = await this.jwtService.verifyAsync<{
+        sub: string;
+        rememberMe?: boolean;
+        type?: string;
+        jti?: string;
+        ua?: string;
+      }>(token, { secret });
+
+      if (payload.type !== 'pending-login' || !payload.jti || !payload.sub) return null;
+      if (payload.ua !== this.uaFingerprint(userAgent)) return null;
+
+      const exists = await this.cacheManager.get(`pending-login:${payload.jti}`);
+      if (!exists) return null; // منقضی یا قبلاً مصرف شده
+
+      return { userId: payload.sub, rememberMe: !!payload.rememberMe };
+    } catch {
+      return null;
+    }
+  }
+
+  /** مصرف pendingToken (single-use) — فقط یک‌بار برای complete */
+  async consumePendingLoginToken(
+    token: string,
+    userAgent?: string,
+  ): Promise<{ userId: string; rememberMe: boolean } | null> {
+    const verified = await this.verifyPendingLoginToken(token, userAgent);
+    if (!verified) return null;
+
+    // حذف jti از cache → توکن غیرقابل استفاده مجدد
+    try {
+      const secret = this.configService.get<string>('JWT_REFRESH_SECRET');
+      const payload = await this.jwtService.verifyAsync<{ jti?: string }>(token, { secret });
+      if (payload.jti) {
+        await this.cacheManager.del(`pending-login:${payload.jti}`);
+      }
+    } catch {
+      // verify بالا موفق شده — این مسیر عملاً رخ نمی‌دهد
+    }
+    return verified;
+  }
+
   // ──── پیدا کردن session با refresh token (برای validate) ────
-  async findSessionByRefreshToken(refreshToken: string): Promise<{ id: string; userId: string; isActive: boolean } | null> {
+  async findSessionByRefreshToken(
+    refreshToken: string,
+  ): Promise<{ id: string; userId: string; isActive: boolean } | null> {
     const sessions = await this.prisma.userSession.findMany({
       where: { isActive: true, expiresAt: { gt: new Date() } },
     });
@@ -136,16 +364,11 @@ export class SessionService {
     return null;
   }
 
-  // ──── آپدیت lastActiveAt هنگام هر API call ────
-  async updateLastActive(sessionId: string): Promise<void> {
-    await this.prisma.userSession.update({
-      where: { id: sessionId },
-      data: { lastActiveAt: new Date() },
-    });
-  }
-
   // ──── لیست sessions فعال کاربر ────
-  async getActiveSessions(userId: string, currentSessionId?: string): Promise<SessionDto[]> {
+  async getActiveSessions(
+    userId: string,
+    currentSessionId?: string,
+  ): Promise<SessionDto[]> {
     const sessions = await this.prisma.userSession.findMany({
       where: {
         userId,

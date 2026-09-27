@@ -25,6 +25,7 @@ export class OtpController {
   async verify(@Body() dto: VerifyOtpDto, @Req() req: any) {
     const userAgent = req.headers['user-agent'] || '';
     const ip = req.ip || req.connection?.remoteAddress || '';
+    const currentSessionId = req.headers['x-current-session-id'] as string | undefined;
     return this.otpService.verifyCode(
       dto.identifier,
       dto.code,
@@ -35,6 +36,7 @@ export class OtpController {
       dto.rememberMe,
       userAgent,
       ip,
+      currentSessionId,
     );
   }
 }

@@ -136,14 +136,15 @@ export class OtpService {
     rememberMe: boolean = false,
     userAgent?: string,
     ip?: string,
+    currentSessionId?: string,
   ): Promise<any> {
     const identifier = this.normalize(rawIdentifier);
 
     // ──── Dev/test bypass: fixed code, no DB row needed ────
     // Active only when OTP_DEV_MODE=true AND NODE_ENV is development/test.
     if (this.isDevBypassCode(code)) {
-      this.logger.warn(`DEV OTP bypass used for ${identifier} (development/test only)`);
-      const result = await this.authService.loginOrCreate(identifier, name, phone, email, password, rememberMe, userAgent, ip);
+    const result = await this.authService.loginOrCreate(identifier, name, phone, email, password, rememberMe, userAgent, ip, currentSessionId);
+    return { ...result, otpVerified: true };
       return { ...result, otpVerified: true };
     }
 
