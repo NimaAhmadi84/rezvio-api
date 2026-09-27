@@ -3,6 +3,7 @@ import {
   ConflictException,
   BadRequestException,
   UnauthorizedException,
+  HttpStatus,
   Logger,
   Inject,
   forwardRef,
@@ -15,7 +16,7 @@ import { UserRole } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../otp/otp.service';
-import { SessionService } from './session.service';
+import { MAX_ACTIVE_SESSIONS, SessionDto, SessionService } from './session.service';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
@@ -49,7 +50,11 @@ export class AuthService {
     return this.toAuthUserDto(user);
   }
 
-  async register(dto: RegisterDto): Promise<AuthResponseDto> {
+  async register(
+    dto: RegisterDto,
+    userAgent?: string,
+    ip?: string,
+  ): Promise<AuthResponseDto> {
     const existingUser = await this.usersService.findByEmail(dto.email);
     if (existingUser) {
       throw new ConflictException('این ایمیل قبلاً در سیستم ثبت شده است');
@@ -67,20 +72,57 @@ export class AuthService {
       password: hashedPassword,
       role: 'CUSTOMER' as UserRole,
     });
-    return this.generateTokens(user);
+    return this.generateTokens(this.toAuthUserDto(user), false, userAgent, ip);
   }
 
-  async login(user: AuthUserDto): Promise<AuthResponseDto> {
-    return this.generateTokens(user);
+  async login(
+    user: AuthUserDto,
+    rememberMe: boolean = false,
+    userAgent?: string,
+    ip?: string,
+  ): Promise<AuthResponseDto> {
+    return this.generateTokens(user, rememberMe, userAgent, ip);
   }
 
-  async refreshTokens(refreshToken: string): Promise<{ accessToken: string }> {
+  async refreshTokens(
+    refreshToken: string,
+    sessionId?: string,
+  ): Promise<{ accessToken: string }> {
     try {
       const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
       if (!refreshSecret) throw new Error('JWT_REFRESH_SECRET is not configured');
-      const payload = await this.jwtService.verifyAsync<JwtPayload>(refreshToken, { secret: refreshSecret });
+      const payload = await this.jwtService.verifyAsync<JwtPayload & Record<string, unknown>>(
+        refreshToken,
+        { secret: refreshSecret },
+      );
+
+      // ──── جلوگیری از قلابی: pendingToken هرگز به‌عنوان refresh پذیرفته نمی‌شود ────
+      if (payload.type === 'pending-login') {
+        throw new UnauthorizedException('توکن نامعتبر است');
+      }
+
       const user = await this.usersService.findOne(payload.sub);
       if (!user) throw new UnauthorizedException('کاربر یافت نشد');
+
+      // ──── Phase 10D+: اعتبارسنجی واقعی سشن هنگام refresh ────
+      // اینجا revoke «واقعاً» اعمال می‌شود: سشن غیرفعال/منقضی/غیرمالک/هش‌ناهمخوان
+      // → 401 با پیام واضح → فرانت logout می‌کند.
+      // fail-open فقط وقتی هدری ارسال نشده باشد (کلاینت‌های قدیمی — پذیرش تدریجی).
+      if (sessionId) {
+        const validation = await this.sessionService.validateForRefresh(
+          sessionId,
+          user.id,
+          refreshToken,
+        );
+        if (!validation.valid) {
+          this.logger.warn(
+            `Session rejected on refresh (${validation.reason}) for user ${user.id}`,
+          );
+          throw new UnauthorizedException('نشست شما پایان یافته است. لطفاً دوباره وارد شوید.');
+        }
+        await this.sessionService.touchLastActive(sessionId);
+      }
+
       const newPayload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
       const accessToken = await this.jwtService.signAsync(newPayload, {
         secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
@@ -88,6 +130,8 @@ export class AuthService {
       });
       return { accessToken };
     } catch (error) {
+      // پیام‌های عمدی 401 (سشن مردود) باید دست‌نخورده به فرانت برسند
+      if (error instanceof UnauthorizedException) throw error;
       this.logger.warn(`Invalid refresh token attempt: ${(error as Error).message}`);
       throw new UnauthorizedException('Refresh Token نامعتبر یا منقضی شده است');
     }
@@ -99,6 +143,7 @@ export class AuthService {
     rememberMe: boolean = false,
     userAgent?: string,
     ip?: string,
+    currentSessionId?: string,
   ): Promise<AuthResponseDto & { sessionId?: string }> {
     const user = await this.usersService.findByEmailOrPhone(identifier);
     if (!user || !user.password) {
@@ -108,7 +153,7 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
     }
-    return this.generateTokens(this.toAuthUserDto(user), rememberMe, userAgent, ip);
+    return this.generateTokens(this.toAuthUserDto(user), rememberMe, userAgent, ip, currentSessionId);
   }
 
   /**
@@ -128,20 +173,21 @@ export class AuthService {
     rememberMe: boolean = false,
     userAgent?: string,
     ip?: string,
+    currentSessionId?: string,
   ): Promise<AuthResponseDto & { isNew: boolean; sessionId?: string }> {
     const isEmail = identifier.includes('@');
-    
+
     if (!isEmail) {
       throw new BadRequestException('در حال حاضر فقط ثبت‌نام و ورود با ایمیل امکان‌پذیر است');
     }
-    
+
     let user = await this.usersService.findByEmailOrPhone(identifier);
     let isNew = false;
 
     if (!user) {
       const data: any = { role: 'CUSTOMER' };
       data.email = identifier;
-      
+
       if (name) data.name = name;
       if (phone) data.phone = phone;
       if (password) {
@@ -153,8 +199,91 @@ export class AuthService {
       this.logger.log(`🆕 کاربر جدید ثبت‌نام شد: ${identifier} | Phone: ${phone || 'N/A'}`);
     }
 
-    const response = await this.generateTokens(this.toAuthUserDto(user), rememberMe, userAgent, ip);
+    const response = await this.generateTokens(
+      this.toAuthUserDto(user),
+      rememberMe,
+      userAgent,
+      ip,
+      currentSessionId,
+    );
     return { ...response, isNew };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Phase 10D+: توکن‌ها + سشن + سقف دستگاه (قلب جریان لاگین)
+  // ═══════════════════════════════════════════════════════════════
+
+  /** ساخت جفت توکن access/refresh (DRY — مشترک بین همه‌ی مسیرها) */
+  private async signTokenPair(
+    user: AuthUserDto,
+    refreshExpires: number,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const payload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
+    const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET');
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
+    if (!accessSecret || !refreshSecret) throw new Error('JWT secrets are not configured');
+
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwtService.signAsync(payload, { secret: accessSecret, expiresIn: ACCESS_TOKEN_EXPIRES }),
+      this.jwtService.signAsync(payload, { secret: refreshSecret, expiresIn: refreshExpires }),
+    ]);
+    return { accessToken, refreshToken };
+  }
+
+  /**
+   * تعیین جایگاه سشن برای این لاگین:
+   *  ۱) لاگین مجدد از همان مرورگر (session-id معتبر) → replace-in-place (سهمیه مصرف نمی‌شود)
+   *  ۲) سقف پر (≥ ۳ فعال) → ConflictException با pendingToken و لیست دستگاه‌ها
+   *  ۳) فضای موجود → ساخت سشن جدید
+   */
+  private async resolveSessionSlot(
+    user: AuthUserDto,
+    refreshToken: string,
+    rememberMe: boolean,
+    userAgent: string,
+    ip: string,
+    refreshExpires: number,
+    currentSessionId?: string,
+  ): Promise<string | undefined> {
+    const expiresAt = new Date(Date.now() + refreshExpires * 1000);
+
+    // ۱) جایگزینی درجا — id سشن ثابت می‌ماند
+    if (currentSessionId) {
+      const replaced = await this.sessionService.replaceSessionInPlace(
+        currentSessionId,
+        user.id,
+        refreshToken,
+        userAgent,
+        ip,
+        expiresAt,
+      );
+      if (replaced) return currentSessionId;
+    }
+
+    // ۲) سقف دستگاه‌های فعال — فقط سشن‌های فعال و منقضی‌نشده شمرده می‌شوند
+    const activeCount = await this.sessionService.countActiveSessions(user.id);
+    if (activeCount >= MAX_ACTIVE_SESSIONS) {
+      const pendingToken = await this.sessionService.issuePendingLoginToken(
+        user.id,
+        rememberMe,
+        userAgent,
+      );
+      const activeSessions = await this.sessionService.getActiveSessions(user.id);
+      this.logger.warn(
+        `⛔ Device limit reached for user ${user.id} (${activeCount}/${MAX_ACTIVE_SESSIONS} active)`,
+      );
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'DEVICE_LIMIT_REACHED',
+        message: `سقف دستگاه‌های فعال شما (${MAX_ACTIVE_SESSIONS} دستگاه) پر است. برای ادامه، یکی از دستگاه‌های فعلی را خارج کنید.`,
+        activeSessions,
+        pendingToken,
+      });
+    }
+
+    // ۳) ساخت سشن جدید
+    return this.sessionService.createSession(user.id, refreshToken, userAgent, ip, expiresAt);
   }
 
   private async generateTokens(
@@ -162,39 +291,34 @@ export class AuthService {
     rememberMe: boolean = false,
     userAgent?: string,
     ip?: string,
+    currentSessionId?: string,
   ): Promise<AuthResponseDto & { sessionId?: string }> {
-    const payload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
-    const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET');
-    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
-    if (!accessSecret || !refreshSecret) throw new Error('JWT secrets are not configured');
-
     // ──── Remember Me: 30 days if true, 1 day if false ────
     const refreshExpires = rememberMe ? REFRESH_TOKEN_EXPIRES_LONG : REFRESH_TOKEN_EXPIRES_SHORT;
+    const { accessToken, refreshToken } = await this.signTokenPair(user, refreshExpires);
 
-    const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(payload, { secret: accessSecret, expiresIn: ACCESS_TOKEN_EXPIRES }),
-      this.jwtService.signAsync(payload, { secret: refreshSecret, expiresIn: refreshExpires }),
-    ]);
-
-    // ──── Phase 10D: Create UserSession record ────
-    let sessionId: string | undefined;
     if (userAgent && ip) {
       try {
-        const expiresAt = new Date(Date.now() + refreshExpires * 1000);
-        sessionId = await this.sessionService.createSession(
-          user.id,
+        const sessionId = await this.resolveSessionSlot(
+          user,
           refreshToken,
+          rememberMe,
           userAgent,
           ip,
-          expiresAt,
+          refreshExpires,
+          currentSessionId,
         );
+        return { accessToken, refreshToken, user, sessionId };
       } catch (error) {
-        this.logger.warn(`Failed to create session: ${(error as Error).message}`);
-        // Session creation failure should NOT block login
+        // ۴۰۹ سقف دستگاه عمدی است — باید به فرانت برسد
+        if (error instanceof ConflictException) throw error;
+        // خطای زیرساختی سشن نباید لاگین را بشکند (fail-open — سشن بدون هدر fail-open است)
+        this.logger.warn(`Session slot resolution failed: ${(error as Error).message}`);
+        return { accessToken, refreshToken, user };
       }
     }
 
-    return { accessToken, refreshToken, user, sessionId };
+    return { accessToken, refreshToken, user };
   }
 
   private toAuthUserDto(user: {
@@ -214,19 +338,69 @@ export class AuthService {
     dto.createdAt = user.createdAt;
     return dto;
   }
+
+  // ════════════════ جریان pendingToken (سقف دستگاه) ════════════════
+
   /**
-   * بازیابی رمز عبور با OTP — Account Enumeration Protection:
-   * همیشه پیام یکسان برمی‌گرداند حتی اگر کاربر وجود نداشته باشد.
+   * لیست دستگاه‌های فعال برای ویزارد سقف دستگاه — بدون JWT کامل.
+   * pendingToken را «مصرف نمی‌کند» (peek) تا complete همچنان کار کند.
    */
+  async getPendingDeviceSessions(
+    pendingToken: string,
+    userAgent?: string,
+  ): Promise<SessionDto[]> {
+    const pending = await this.sessionService.verifyPendingLoginToken(pendingToken, userAgent);
+    if (!pending) {
+      throw new UnauthorizedException('درخواست ورود منقضی یا نامعتبر است. لطفاً دوباره وارد شوید.');
+    }
+    return this.sessionService.getActiveSessions(pending.userId);
+  }
+
+  /**
+   * تکمیل لاگین پس از خروج از یکی از دستگاه‌ها — بدون تکرار رمز عبور.
+   * ۱) مصرف pendingToken (single-use) ۲) خروج از دستگاه انتخابی (ownership چک می‌شود)
+   * ۳) جریان عادی توکن+سشن (سقف دوباره چک می‌شود — ایمن در برابر race)
+   */
+  async completeDeviceLimitLogin(
+    pendingToken: string,
+    revokeSessionId: string,
+    userAgent?: string,
+    ip?: string,
+  ): Promise<AuthResponseDto & { sessionId?: string }> {
+    // ترتیب عمدی: verify (بدون مصرف) → revoke → consume → generate
+    // اگر شناسه سشن نامعتبر باشد، pendingToken هنوز مصرف نشده تا کاربر دوباره تلاش کند
+    const pending = await this.sessionService.verifyPendingLoginToken(pendingToken, userAgent);
+    if (!pending) {
+      throw new UnauthorizedException('درخواست ورود منقضی یا نامعتبر است. لطفاً دوباره وارد شوید.');
+    }
+
+    await this.sessionService.revokeSession(pending.userId, revokeSessionId);
+    const consumed = await this.sessionService.consumePendingLoginToken(pendingToken, userAgent);
+    if (!consumed) {
+      throw new UnauthorizedException('درخواست ورود منقضی یا نامعتبر است. لطفاً دوباره وارد شوید.');
+    }
+    this.logger.log(
+      `📱 Device-limit login completing for user ${pending.userId} — revoked session ${revokeSessionId}`,
+    );
+
+    const user = await this.usersService.findOne(pending.userId);
+    return this.generateTokens(this.toAuthUserDto(user), pending.rememberMe, userAgent, ip);
+  }
+
   // ──── Google OAuth Login (فقط برای کاربران موجود — نه Register) ────
 
-  async loginWithGoogle(googleUser: {
-    googleId: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-    picture?: string;
-  }, rememberMe: boolean = false, userAgent?: string, ip?: string): Promise<{ accessToken: string; refreshToken: string; user: any; sessionId?: string }> {
+  async loginWithGoogle(
+    googleUser: {
+      googleId: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+      picture?: string;
+    },
+    rememberMe: boolean = false,
+    userAgent?: string,
+    ip?: string,
+  ): Promise<AuthResponseDto & { sessionId?: string }> {
     // پیدا کردن کاربر با ایمیل
     const user = await this.usersService.findByEmailOrPhone(googleUser.email);
 
@@ -237,64 +411,16 @@ export class AuthService {
       );
     }
 
-    // تولید JWT tokens (با همان constants که generateTokens استفاده می‌کند)
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
-    };
-
-    const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET');
-    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
-    if (!accessSecret || !refreshSecret) throw new Error('JWT secrets are not configured');
-
-    // ──── Remember Me: 30 days if true, 1 day if false ────
-    const refreshExpires = rememberMe ? REFRESH_TOKEN_EXPIRES_LONG : REFRESH_TOKEN_EXPIRES_SHORT;
-
-    const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(payload, {
-        secret: accessSecret,
-        expiresIn: ACCESS_TOKEN_EXPIRES, // 900 seconds (15 min)
-      }),
-      this.jwtService.signAsync(payload, {
-        secret: refreshSecret,
-        expiresIn: refreshExpires,
-      }),
-    ]);
-
-    // ──── Phase 10D: Create UserSession record ────
-    let sessionId: string | undefined;
-    if (userAgent && ip) {
-      try {
-        const expiresAt = new Date(Date.now() + refreshExpires * 1000);
-        sessionId = await this.sessionService.createSession(
-          user.id,
-          refreshToken,
-          userAgent,
-          ip,
-          expiresAt,
-        );
-      } catch (error) {
-        this.logger.warn(`Failed to create Google session: ${(error as Error).message}`);
-      }
-    }
-
-    return {
-      accessToken,
-      refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        phone: user.phone,
-        role: user.role,
-      },
-      sessionId,
-    };
+    // ریفکتور Phase 10D+: توکن‌ها + سشن + سقف دستگاه همه در generateTokens
+    // (حالت سقف پر → ConflictException با pendingToken → کنترلر به /auth ریدایرکت می‌کند)
+    return this.generateTokens(this.toAuthUserDto(user), rememberMe, userAgent, ip);
   }
 
-  async resetPassword(identifier: string, code: string, newPassword: string): Promise<{ message: string }> {
+  async resetPassword(
+    identifier: string,
+    code: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
     const normalizedIdentifier = identifier.trim().toLowerCase();
     const user = await this.usersService.findByEmailOrPhone(normalizedIdentifier);
 
@@ -306,6 +432,7 @@ export class AuthService {
       }
       const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
       await this.usersService.updateUser(user.id, { password: hashedPassword });
+      await this.revokeAllSessionsAfterPasswordChange(user.id, 'reset-password (dev)');
       this.logger.log(`✅ DEV reset-password bypass used for ${normalizedIdentifier}`);
       return { message: 'رمز عبور با موفقیت تغییر کرد' };
     }
@@ -352,7 +479,22 @@ export class AuthService {
       });
     });
 
+    // ──── امنیت: تغییر رمز → خروج از همه‌ی دستگاه‌ها (تصمیم صاحب پروژه) ────
+    await this.revokeAllSessionsAfterPasswordChange(user.id, 'reset-password');
+
     this.logger.log(`✅ Password reset successful for ${normalizedIdentifier}`);
     return { message: 'رمز عبور با موفقیت تغییر کرد' };
+  }
+
+  /** خروج از همه‌ی دستگاه‌ها پس از تغییر/بازیابی رمز — هرگز جریان اصلی را نمی‌شکند */
+  private async revokeAllSessionsAfterPasswordChange(userId: string, via: string): Promise<void> {
+    try {
+      const count = await this.sessionService.revokeAllSessions(userId);
+      this.logger.log(`🔒 ${count} session(s) revoked after password change (${via}) for user ${userId}`);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to revoke sessions after password change (${via}): ${(error as Error).message}`,
+      );
+    }
   }
 }

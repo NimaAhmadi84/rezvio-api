@@ -12,6 +12,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { OtpService } from '../otp/otp.service';
+import { SessionService } from '../auth/session.service';
 import * as bcrypt from 'bcryptjs';
 
 // ──── Blacklist رمزهای بسیار رایج — لایه دوم دفاع بک‌اند ────
@@ -45,6 +46,8 @@ export class UsersService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => OtpService))
     private readonly otpService: OtpService,
+    @Inject(forwardRef(() => SessionService))
+    private readonly sessionService: SessionService,
   ) {}
 
   async create(dto: CreateUserDto) {
@@ -412,13 +415,15 @@ export class UsersService {
   }
 
   /**
-   * تغییر رمز عبور — قدرت رمز + blacklist (بدون قانون نام/ایمیل)
+   * تغییر رمز عبور — قدرت رمز + blacklist
+   * Phase 10D+: پس از تغییر رمز، همه‌ی دستگاه‌های دیگر خارج می‌شوند
    */
   async changePassword(
     userId: string,
     currentPassword: string,
     newPassword: string,
     confirmPassword: string,
+    currentSessionId?: string,
   ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
@@ -457,6 +462,14 @@ export class UsersService {
       where: { id: userId },
       data: { password: hashedPassword },
     });
+
+    // ──── امنیت: تغییر رمز → خروج از همه‌ی دستگاه‌های دیگر (تصمیم صاحب پروژه) ────
+    try {
+      const revoked = await this.sessionService.revokeAllSessions(userId, currentSessionId);
+      this.logger.log(`🔒 ${revoked} other session(s) revoked after password change for user ${userId}`);
+    } catch (error) {
+      this.logger.warn(`Failed to revoke sessions after password change: ${(error as Error).message}`);
+    }
 
     this.logger.log(`🔐 Password changed for user ${userId}`);
     return { success: true, message: 'رمز عبور با موفقیت تغییر کرد' };

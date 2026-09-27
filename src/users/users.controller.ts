@@ -8,6 +8,7 @@ import {
   Delete,
   ParseUUIDPipe,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -28,7 +29,7 @@ import { UserRole } from '@prisma/client';
 @ApiTags('Users')
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -114,12 +115,15 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'تغییر رمز عبور' })
-  changePassword(@CurrentUser() user: AuthUserDto, @Body() dto: ChangePasswordDto) {
+  changePassword(@CurrentUser() user: AuthUserDto, @Body() dto: ChangePasswordDto, @Req() req: any) {
+    // ──── سشن فعلی حفظ می‌شود؛ بقیه دستگاه‌ها پس از تغییر رمز خارج می‌شوند ────
+    const currentSessionId = req.headers['x-current-session-id'] as string | undefined;
     return this.usersService.changePassword(
       user.id,
       dto.currentPassword,
       dto.newPassword,
       dto.confirmPassword,
+      currentSessionId,
     );
   }
 
