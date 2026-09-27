@@ -58,7 +58,7 @@ function buildService() {
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   };
   const otpService: any = { isDevBypassCode: jest.fn().mockReturnValue(false) };
-  const service = new UsersService(prisma, otpService);
+  const service = new UsersService(prisma, otpService, { revokeAllSessions: async () => 0 } as any);
   return { service, prisma, otpService, otpRow, tx };
 }
 
