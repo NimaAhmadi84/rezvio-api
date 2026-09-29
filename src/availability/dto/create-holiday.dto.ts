@@ -1,9 +1,9 @@
-import { IsString, IsOptional, IsDateString } from 'class-validator';
+import { IsString, IsOptional, IsDateString, IsUUID } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateHolidayDto {
   @ApiProperty({ description: 'شناسه کسب‌وکار' })
-  @IsString()
+  @IsUUID('4', { message: 'شناسه کسب‌وکار نامعتبر است' })
   businessId!: string;
 
   @ApiProperty({ example: '2026-08-15', description: 'تاریخ تعطیلی (YYYY-MM-DD)' })

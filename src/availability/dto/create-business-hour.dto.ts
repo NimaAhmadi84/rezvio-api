@@ -1,4 +1,4 @@
-import { IsInt, IsString, IsArray, ValidateNested, Min, Max, Matches } from 'class-validator';
+import { IsInt, IsString, IsUUID, IsArray, ValidateNested, Min, Max, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -22,7 +22,7 @@ export class BusinessHourDto {
 
 export class CreateBusinessHourDto {
   @ApiProperty({ description: 'شناسه کسب‌وکار' })
-  @IsString()
+  @IsUUID('4', { message: 'شناسه کسب‌وکار نامعتبر است' })
   businessId!: string;
 
   @ApiProperty({ type: [BusinessHourDto], description: 'لیست ساعات کاری' })

@@ -1,4 +1,4 @@
-import { IsString, IsInt, IsNumber, IsOptional, MinLength, MaxLength, Min, Max } from 'class-validator';
+import { IsString, IsUUID, IsInt, IsNumber, IsOptional, MinLength, MaxLength, Min, Max } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateServiceDto {
@@ -26,6 +26,6 @@ export class CreateServiceDto {
   price!: number;
 
   @ApiProperty({ description: 'شناسه کسب‌وکار' })
-  @IsString()
+  @IsUUID('4', { message: 'شناسه کسب‌وکار نامعتبر است' })
   businessId!: string;
 }

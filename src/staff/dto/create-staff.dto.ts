@@ -1,5 +1,6 @@
 import {
   IsString,
+  IsUUID,
   IsEmail,
   IsOptional,
   MinLength,
@@ -36,6 +37,6 @@ export class CreateStaffDto {
   phone!: string;
 
   @ApiProperty({ description: 'شناسه کسب‌وکار' })
-  @IsString()
+  @IsUUID('4', { message: 'شناسه کسب‌وکار نامعتبر است' })
   businessId!: string;
 }
