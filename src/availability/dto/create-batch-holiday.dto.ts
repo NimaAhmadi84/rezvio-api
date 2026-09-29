@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsDateString, IsUUID } from 'class-validator';
+import { IsString, IsOptional, IsDateString, IsUUID, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
@@ -49,5 +49,6 @@ export class CreateBatchHolidayDto {
   })
   @IsString({ message: 'دلیل باید رشته باشد' })
   @IsOptional()
+  @MaxLength(100, { message: 'دلیل نباید بیش از ۱۰۰ کاراکتر باشد' })
   reason?: string;
 }

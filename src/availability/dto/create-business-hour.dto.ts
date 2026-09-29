@@ -1,4 +1,4 @@
-import { IsInt, IsString, IsUUID, IsArray, ValidateNested, Min, Max, Matches } from 'class-validator';
+import { IsInt, IsString, IsUUID, IsArray, ArrayMaxSize, ValidateNested, Min, Max, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -27,6 +27,7 @@ export class CreateBusinessHourDto {
 
   @ApiProperty({ type: [BusinessHourDto], description: 'لیست ساعات کاری' })
   @IsArray()
+  @ArrayMaxSize(7, { message: 'حداکثر ۷ روز هفته قابل تنظیم است' })
   @ValidateNested({ each: true })
   @Type(() => BusinessHourDto)
   hours!: BusinessHourDto[];
