@@ -205,6 +205,7 @@ model Holiday {
   reason     String?
   createdAt  DateTime @default(now())
 
+  @@unique([businessId, date])
   @@map("holidays")
 }
 
