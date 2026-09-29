@@ -1,4 +1,4 @@
-import { IsArray, IsEnum, ArrayMaxSize, ArrayMinSize } from 'class-validator';
+import { IsArray, IsUUID, IsEnum, ArrayMaxSize, ArrayMinSize } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { BookingStatus } from '@prisma/client';
 
@@ -11,6 +11,7 @@ export class BatchUpdateStatusDto {
   @IsArray({ message: 'bookingIds باید یک آرایه باشد' })
   @ArrayMinSize(1, { message: 'حداقل یک رزرو باید انتخاب شود' })
   @ArrayMaxSize(50, { message: 'حداکثر ۵۰ رزرو در هر درخواست مجاز است' })
+  @IsUUID('4', { each: true, message: 'شناسه رزرو نامعتبر است' })
   bookingIds!: string[];
 
   @ApiProperty({
