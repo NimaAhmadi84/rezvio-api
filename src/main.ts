@@ -6,6 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as os from 'os';
 import { AppModule } from './app.module';
 import { validateSecurityConfig } from './config/security-config';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 // ═══════════════════════════════════════════════════════════════
 // Helper: Get Local Network IP
@@ -65,6 +66,9 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  // ──── Global Exception Filter (شکل واحد خطا) ────
+  app.useGlobalFilters(new HttpExceptionFilter());
 
   // ──── Swagger (API docs) — non-production only ────
   if (!isProduction) {
