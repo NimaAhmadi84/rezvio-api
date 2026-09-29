@@ -18,7 +18,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import type { Response } from 'express';
+import type { Request as ExpressRequest, Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -297,18 +297,25 @@ export class AuthController {
   @Get('google')
   @UseGuards(AuthGuard('google'))
   @ApiOperation({ summary: 'شروع ورود با Google OAuth' })
-  async googleAuth(@Req() req) {
+  async googleAuth(@Req() _req: ExpressRequest) {
     // Guard redirects to Google
   }
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   @ApiOperation({ summary: 'Callback از Google OAuth' })
-  async googleAuthRedirect(@Req() req, @Res() res: Response) {
+  async googleAuthRedirect(@Req() req: ExpressRequest, @Res() res: Response) {
     try {
       const userAgent = req.headers['user-agent'] || '';
       const ip = req.ip || req.connection?.remoteAddress || '';
-      const result = await this.authService.loginWithGoogle(req.user, false, userAgent, ip);
+      const googleProfile = req.user as {
+        googleId: string;
+        email: string;
+        firstName: string;
+        lastName: string;
+        picture?: string;
+      };
+      const result = await this.authService.loginWithGoogle(googleProfile, false, userAgent, ip);
 
       // Redirect به فرانت‌اند با tokens در query params
       const frontendUrl = this.configService.get<string>('FRONTEND_URL');

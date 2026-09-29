@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../otp/otp.service';
+import { SessionService } from './session.service';
 
 describe('AuthService.register role hardening (Phase A)', () => {
   let authService: AuthService;
@@ -52,6 +53,19 @@ describe('AuthService.register role hardening (Phase A)', () => {
         {
           provide: OtpService,
           useValue: { request: jest.fn(), isDevBypassCode: jest.fn().mockReturnValue(false) },
+        },
+        {
+          provide: SessionService,
+          useValue: {
+            createSession: jest.fn().mockResolvedValue({ sessionId: 'sess-1' }),
+            replaceSessionInPlace: jest.fn().mockResolvedValue(null),
+            countActiveSessions: jest.fn().mockResolvedValue(0),
+            issuePendingLoginToken: jest.fn().mockResolvedValue('pending-token'),
+            getActiveSessions: jest.fn().mockResolvedValue([]),
+            validateForRefresh: jest.fn().mockResolvedValue({ ok: true }),
+            touchLastActive: jest.fn().mockResolvedValue(undefined),
+            verifyPendingLoginToken: jest.fn(),
+          },
         },
       ],
     }).compile();

@@ -87,6 +87,10 @@ describe('OtpService dev/test mode (Phase A)', () => {
       undefined,
       undefined,
       undefined,
+      false,      // rememberMe
+      undefined,  // userAgent
+      undefined,  // ip
+      undefined,  // currentSessionId
     );
     expect(res.otpVerified).toBe(true);
   });

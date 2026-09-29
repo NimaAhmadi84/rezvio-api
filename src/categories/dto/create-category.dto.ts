@@ -9,7 +9,7 @@ export class CreateCategoryDto {
   @IsString({ message: 'نام باید رشته متنی باشد' })
   @MinLength(2, { message: 'نام باید حداقل ۲ کاراکتر باشد' })
   @MaxLength(100, { message: 'نام نباید بیش از ۱۰۰ کاراکتر باشد' })
-  name: string;
+  name!: string;
 
   @ApiProperty({
     description: 'اسلاگ URL (انگلیسی، lowercase، فقط a-z و اعداد و -)',
@@ -21,7 +21,7 @@ export class CreateCategoryDto {
   @Matches(/^[a-z0-9]+(-[a-z0-9]+)*$/, {
     message: 'اسلاگ فقط می‌تواند شامل حروف کوچک انگلیسی، اعداد و - باشد',
   })
-  slug: string;
+  slug!: string;
 
   @ApiPropertyOptional({
     description: 'آیکون (emoji یا نام آیکون)',
