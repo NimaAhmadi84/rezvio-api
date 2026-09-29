@@ -14,9 +14,10 @@ export class CreateServiceDto {
   @MaxLength(500, { message: 'توضیحات نباید بیش از ۵۰۰ کاراکتر باشد' })
   description?: string;
 
-  @ApiProperty({ example: 30, description: 'مدت زمان خدمت (دقیقه)' })
+  @ApiProperty({ example: 30, description: 'مدت زمان خدمت (دقیقه، حداکثر ۴۸۰ = ۸ ساعت)' })
   @IsInt({ message: 'مدت زمان باید عدد صحیح باشد' })
   @Min(5, { message: 'مدت زمان باید حداقل ۵ دقیقه باشد' })
+  @Max(480, { message: 'مدت زمان نباید بیش از ۴۸۰ دقیقه (۸ ساعت) باشد' })
   durationMinutes!: number;
 
   @ApiProperty({ example: 150000, description: 'قیمت خدمت (تومان)' })

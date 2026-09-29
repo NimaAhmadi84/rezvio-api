@@ -23,6 +23,7 @@ export class CreateStaffDto {
 
   @ApiPropertyOptional({ example: 'ali@example.com' })
   @IsEmail({}, { message: 'ایمیل نامعتبر است' })
+  @MaxLength(254, { message: 'ایمیل بیش از حد طولانی است' })
   @IsOptional()
   email?: string;
 
