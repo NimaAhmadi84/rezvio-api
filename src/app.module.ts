@@ -26,6 +26,7 @@ import { UploadModule } from './upload/upload.module';
 import { BusinessImagesModule } from './business-images/business-images.module';
 import { BusinessLikesModule } from './business-likes/business-likes.module';
 import { BusinessReviewsModule } from './business-reviews/business-reviews.module';
+import { validateEnv } from './config/env.validation';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { BusinessReviewsModule } from './business-reviews/business-reviews.modul
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      validate: validateEnv,
     }),
     PrismaModule,
     UsersModule,
