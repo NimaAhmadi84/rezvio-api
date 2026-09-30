@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { CreateBusinessImageDto } from './dto/create-business-image.dto';
@@ -19,14 +20,23 @@ export class BusinessImagesService {
    * بررسی مالکیت کسب‌وکار (دفاع در عمق)
    */
   private async checkOwnership(businessId: string, userId: string): Promise<void> {
-    const business = await this.prisma.business.findUnique({
-      where: { id: businessId },
-      select: { ownerId: true },
-    });
+    const [business, user] = await Promise.all([
+      this.prisma.business.findUnique({
+        where: { id: businessId },
+        select: { ownerId: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      }),
+    ]);
 
     if (!business) {
       throw new NotFoundException('کسب‌وکار یافت نشد');
     }
+
+    // ADMIN bypass
+    if (user?.role === UserRole.ADMIN) return;
 
     if (business.ownerId !== userId) {
       throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');

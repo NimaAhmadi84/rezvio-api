@@ -481,29 +481,39 @@ export class BusinessesService {
     return { counted: true };
   }
 
+  /**
+   * بررسی دسترسی به کسب‌وکار.
+   *
+   * - ADMIN: دسترسی کامل به همه کسب‌وکارها (bypass)
+   * - OWNER/CUSTOMER: فقط کسب‌وکارهای خودشون (ownerId === userId)
+   *
+   * role کاربر از DB خونده می‌شه چون JWT ممکنه role قدیمی داشته باشه
+   * (مثلاً کاربر CUSTOMER بود و بعد OWNER شد).
+   */
   async checkOwnership(businessId: string, userId: string): Promise<void> {
-    const business = await this.prisma.business.findUnique({
-      where: { id: businessId },
-      select: { ownerId: true },
-    });
+    const [business, user] = await Promise.all([
+      this.prisma.business.findUnique({
+        where: { id: businessId },
+        select: { ownerId: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      }),
+    ]);
+
     if (!business) throw new NotFoundException('کسب‌وکار یافت نشد');
-    if (business.ownerId !== userId)
-      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
-  }
 
-  async update(id: string, userId: string, dto: UpdateBusinessDto) {
-    const business = await this.prisma.business.findUnique({
-      where: { id },
-      select: { ownerId: true },
-    });
-
-    if (!business) {
-      throw new NotFoundException('کسب‌وکار یافت نشد');
-    }
+    // ADMIN bypass — دسترسی کامل به همه کسب‌وکارها
+    if (user?.role === UserRole.ADMIN) return;
 
     if (business.ownerId !== userId) {
       throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
     }
+  }
+
+  async update(id: string, userId: string, dto: UpdateBusinessDto) {
+    await this.checkOwnership(id, userId);
 
     const data: any = {};
 
@@ -764,12 +774,12 @@ export class BusinessesService {
    * - تعداد بازدید صفحه
    */
   async getStats(businessId: string, userId: string) {
-    // Ownership check
+    await this.checkOwnership(businessId, userId);
+
     const business = await this.prisma.business.findUnique({
       where: { id: businessId },
       select: {
         id: true,
-        ownerId: true,
         viewsCount: true,
         likesCount: true,
         bookingsCount: true,
@@ -778,9 +788,6 @@ export class BusinessesService {
 
     if (!business) {
       throw new NotFoundException('کسب‌وکار یافت نشد');
-    }
-    if (business.ownerId !== userId) {
-      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
     }
 
     // شمارش‌های موازی برای performance
