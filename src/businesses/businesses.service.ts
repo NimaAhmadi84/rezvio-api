@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
 import { SearchBusinessesDto } from './dto/search-businesses.dto';
+import { sanitizeText } from '../common/utils/sanitize.util';
 
 
 @Injectable()
@@ -144,7 +145,7 @@ export class BusinessesService {
             slug,
             address: dto.address,
             phone: dto.phone,
-            description: dto.description,
+            description: dto.description ? sanitizeText(dto.description) : undefined,
             logoUrl: dto.logoUrl,
             categoryId: dto.categoryId,
             province: dto.province,
@@ -267,7 +268,7 @@ export class BusinessesService {
         slug,
         address: dto.address,
         phone: dto.phone,
-        description: dto.description,
+        description: dto.description ? sanitizeText(dto.description) : undefined,
         logoUrl: dto.logoUrl,
         categoryId: dto.categoryId,
         province: dto.province,
@@ -520,7 +521,7 @@ export class BusinessesService {
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.phone !== undefined) data.phone = dto.phone;
-    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.description !== undefined) data.description = sanitizeText(dto.description);
     if (dto.logoUrl !== undefined) data.logoUrl = dto.logoUrl;
     if (dto.categoryId !== undefined) data.categoryId = dto.categoryId;
     if (dto.province !== undefined) data.province = dto.province;

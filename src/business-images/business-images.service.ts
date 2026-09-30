@@ -5,6 +5,7 @@ import { UploadService } from '../upload/upload.service';
 import { CreateBusinessImageDto } from './dto/create-business-image.dto';
 import { UpdateBusinessImageDto } from './dto/update-business-image.dto';
 import { ReorderBusinessImagesDto } from './dto/reorder-business-images.dto';
+import { sanitizeText } from '../common/utils/sanitize.util';
 
 @Injectable()
 export class BusinessImagesService {
@@ -89,7 +90,7 @@ export class BusinessImagesService {
     const image = await this.prisma.businessImage.create({
       data: {
         url: dto.url,
-        caption: dto.caption,
+        caption: dto.caption ? sanitizeText(dto.caption) : undefined,
         sortOrder,
         businessId,
       },
@@ -139,7 +140,7 @@ export class BusinessImagesService {
     }
 
     const data: any = {};
-    if (dto.caption !== undefined) data.caption = dto.caption;
+    if (dto.caption !== undefined) data.caption = sanitizeText(dto.caption);
     if (dto.sortOrder !== undefined) data.sortOrder = dto.sortOrder;
 
     const updated = await this.prisma.businessImage.update({

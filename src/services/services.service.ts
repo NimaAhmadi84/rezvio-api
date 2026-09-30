@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { BusinessesService } from '../businesses/businesses.service';
+import { sanitizeText } from '../common/utils/sanitize.util';
 
 @Injectable()
 export class ServicesService {
@@ -22,7 +23,7 @@ export class ServicesService {
     const service = await this.prisma.service.create({
       data: {
         name: dto.name,
-        description: dto.description,
+        description: dto.description ? sanitizeText(dto.description) : undefined,
         durationMinutes: dto.durationMinutes,
         price: dto.price,
         businessId: dto.businessId,
@@ -127,9 +128,14 @@ export class ServicesService {
     // بررسی مالکیت business
     await this.businessesService.checkOwnership(service.businessId, userId);
 
+    const data: UpdateServiceDto = { ...dto };
+    if (data.description !== undefined) {
+      data.description = sanitizeText(data.description);
+    }
+
     const updated = await this.prisma.service.update({
       where: { id },
-      data: dto,
+      data,
     });
 
     return updated;

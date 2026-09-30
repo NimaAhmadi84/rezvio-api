@@ -241,7 +241,7 @@ export class BookingsService {
               serviceId: dto.serviceId,
               startTime,
               endTime,
-              notes: dto.notes,
+              notes: dto.notes ? sanitizeText(dto.notes) : undefined,
               status: BookingStatus.PENDING,
               paymentMethod: dto.paymentMethod ?? PaymentMethod.IN_PERSON,
             },
