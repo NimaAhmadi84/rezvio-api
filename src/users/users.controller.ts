@@ -93,6 +93,7 @@ export class UsersController {
   @Post('request-email-change')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
   @ApiOperation({ summary: 'درخواست تغییر ایمیل (ارسال OTP به ایمیل جدید)' })
   requestEmailChange(@CurrentUser() user: AuthUserDto, @Body() dto: RequestEmailChangeDto) {
     return this.usersService.requestEmailChange(user.id, dto.newEmail);
