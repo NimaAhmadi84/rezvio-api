@@ -251,7 +251,8 @@ export class BookingsService {
         },
       );
 
-      return this.findOne(booking.id);
+      // caller داخلی: کاربر خودش رزرو رو ساخته → دسترسی CUSTOMER (owner خودش)
+      return this.findOne(booking.id, userId, 'CUSTOMER');
     } catch (error) {
       if (error instanceof ConflictException) {
         throw error;
@@ -454,7 +455,19 @@ export class BookingsService {
   /**
    * دریافت یک رزرو با ID
    */
-  async findOne(id: string) {
+  /**
+   * دریافت جزئیات رزرو با ownership check.
+   *
+   * دسترسی:
+   *   - CUSTOMER: فقط رزروهای خودش
+   *   - OWNER: فقط رزروهای کسب‌وکارهای خودش
+   *   - ADMIN: همه
+   *
+   * @param id رزرو
+   * @param userId کاربر جاری
+   * @param userRole نقش کاربر
+   */
+  async findOne(id: string, userId: string, userRole: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
@@ -463,6 +476,7 @@ export class BookingsService {
             id: true,
             name: true,
             slug: true,
+            ownerId: true,
           },
         },
         customer: {
@@ -491,6 +505,20 @@ export class BookingsService {
 
     if (!booking) {
       throw new NotFoundException('رزرو یافت نشد');
+    }
+
+    const isCustomer = userRole === 'CUSTOMER';
+    const isOwner = userRole === 'OWNER';
+    const isAdmin = userRole === 'ADMIN';
+
+    if (isCustomer && booking.customerId !== userId) {
+      throw new ForbiddenException('شما مالک این رزرو نیستید');
+    }
+    if (isOwner && booking.business.ownerId !== userId) {
+      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
+    }
+    if (!isCustomer && !isOwner && !isAdmin) {
+      throw new ForbiddenException('دسترسی غیرمجاز');
     }
 
     return booking;

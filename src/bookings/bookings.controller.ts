@@ -190,9 +190,13 @@ export class BookingsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'دریافت جزئیات رزرو' })
   @ApiResponse({ status: 200, description: 'جزئیات رزرو' })
+  @ApiResponse({ status: 403, description: 'دسترسی غیرمجاز' })
   @ApiResponse({ status: 404, description: 'رزرو یافت نشد' })
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.bookingsService.findOne(id);
+  findOne(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AuthUserDto,
+  ) {
+    return this.bookingsService.findOne(id, user.id, user.role);
   }
 
   @Patch(':id/status')
