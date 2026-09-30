@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { sanitizeText } from '../common/utils/sanitize.util';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
@@ -722,7 +723,7 @@ export class BookingsService {
       );
     }
 
-    const sanitizedReason = this.sanitizeText(dto.reason);
+    const sanitizedReason = sanitizeText(dto.reason);
 
     if (sanitizedReason.length < 10) {
       throw new BadRequestException(
@@ -855,10 +856,6 @@ export class BookingsService {
   /**
    * Sanitize متن — حذف تگ‌های HTML + فشرده‌سازی فضای خالی
    */
-  private sanitizeText(input: string): string {
-    const noHtml = input.replace(/<[^>]*>/g, '');
-    return noHtml.replace(/\s+/g, ' ').trim();
-  }
 
   /**
    * دریافت رزروهای پیش‌رو برای OWNER
