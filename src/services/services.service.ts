@@ -32,11 +32,18 @@ export class ServicesService {
     return service;
   }
 
-  async findAll(businessId?: string) {
-    const where = businessId ? { businessId } : {};
+  async findAll(businessId: string, requesterId?: string) {
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: { ownerId: true },
+    });
+
+    if (!business) {
+      throw new NotFoundException('کسب‌وکار یافت نشد');
+    }
 
     return this.prisma.service.findMany({
-      where,
+      where: { businessId },
       include: {
         business: {
           select: {
@@ -59,7 +66,7 @@ export class ServicesService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, requesterId?: string) {
     const service = await this.prisma.service.findUnique({
       where: { id },
       include: {
@@ -68,6 +75,7 @@ export class ServicesService {
             id: true,
             name: true,
             slug: true,
+            ownerId: true,
           },
         },
         staff: {
@@ -88,7 +96,22 @@ export class ServicesService {
       throw new NotFoundException('خدمت یافت نشد');
     }
 
-    return service;
+    const isOwner = !!requesterId && service.business.ownerId === requesterId;
+
+    // email کارمندان فقط برای مالک کسب‌وکار
+    if (isOwner) {
+      const { business, ...rest } = service;
+      return { ...rest, business: { id: business.id, name: business.name, slug: business.slug } };
+    }
+
+    return {
+      ...service,
+      business: { id: service.business.id, name: service.business.name, slug: service.business.slug },
+      staff: service.staff.map((ss) => ({
+        ...ss,
+        staff: { id: ss.staff.id, name: ss.staff.name },
+      })),
+    };
   }
 
   async update(id: string, userId: string, dto: UpdateServiceDto) {

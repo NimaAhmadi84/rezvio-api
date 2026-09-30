@@ -16,6 +16,7 @@ import { ServicesService } from './services.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -37,16 +38,24 @@ export class ServicesController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'دریافت لیست خدمات (می‌توان با businessId فیلتر کرد)' })
-  @ApiQuery({ name: 'businessId', required: false })
-  findAll(@Query('businessId') businessId?: string) {
-    return this.servicesService.findAll(businessId);
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({ summary: 'دریافت لیست خدمات یک کسب‌وکار (businessId اجباری)' })
+  @ApiQuery({ name: 'businessId', required: true })
+  findAll(
+    @Query('businessId', new ParseUUIDPipe()) businessId: string,
+    @CurrentUser() user: AuthUserDto | null,
+  ) {
+    return this.servicesService.findAll(businessId, user?.id);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'دریافت خدمت با ID' })
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.servicesService.findOne(id);
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({ summary: 'دریافت خدمت با ID (staff email فقط برای مالک)' })
+  findOne(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AuthUserDto | null,
+  ) {
+    return this.servicesService.findOne(id, user?.id);
   }
 
   @Patch(':id')
