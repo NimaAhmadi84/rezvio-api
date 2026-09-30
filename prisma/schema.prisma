@@ -154,6 +154,7 @@ model Staff {
   breaks     StaffBreak[]
   dateBreaks StaffDateBreak[] // ← این خط را
 
+  @@index([businessId])
   @@map("staff")
 }
 
@@ -171,6 +172,7 @@ model Service {
   staff    StaffService[]
   bookings Booking[]
 
+  @@index([businessId])
   @@map("services")
 }
 
@@ -194,6 +196,7 @@ model BusinessHour {
   closeTime  String // HH:MM format
   createdAt  DateTime @default(now())
 
+  @@index([businessId])
   @@map("business_hours")
 }
 

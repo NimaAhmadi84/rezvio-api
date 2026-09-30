@@ -7,6 +7,7 @@ import { Pool } from 'pg';
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
   private pool: Pool;
+  private keepAliveTimer?: NodeJS.Timeout;
 
   constructor() {
     // 🎯 ساخت Connection Pool بهینه مخصوص Supabase + ایران (latency بالا)
@@ -59,6 +60,20 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       await this.$connect();
       this.logger.log('✅ Database connected successfully');
       this.logger.log(`📊 Pool config: max=${this.pool.options.max}, min=${this.pool.options.min}`);
+
+      // 🔥 Warm-up: دو query ساده که connectionهای min رو از قبل باز کنن
+      // بدون این، اولین query کاربر بعد از idle timeout حدود ۲ ثانیه طول می‌کشه
+      await this.$queryRaw`SELECT 1`;
+      await this.$queryRaw`SELECT 1`;
+      this.logger.log('🔥 Pool warmed up (2 connections active)');
+
+      // 💓 Keepalive: هر 30 ثانیه یه ping کوچیک تا connectionها warm بمونن
+      this.keepAliveTimer = setInterval(() => {
+        this.$queryRaw`SELECT 1`.catch((err) => {
+          this.logger.warn(`Keepalive ping failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }, 30_000);
+      this.keepAliveTimer.unref();
     } catch (error: unknown) {
       // 🛡️ Fix: در strict mode، error از نوع unknown است و نیاز به type guard دارد
       const message = error instanceof Error ? error.message : String(error);
@@ -68,6 +83,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleDestroy() {
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = undefined;
+    }
     await this.$disconnect();
     await this.pool.end();
     this.logger.log('🔌 Database disconnected and pool closed');
