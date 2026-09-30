@@ -16,6 +16,7 @@ import { StaffService } from './staff.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -37,16 +38,24 @@ export class StaffController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'دریافت لیست کارکنان (می‌توان با businessId فیلتر کرد)' })
-  @ApiQuery({ name: 'businessId', required: false })
-  findAll(@Query('businessId') businessId?: string) {
-    return this.staffService.findAll(businessId);
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({ summary: 'دریافت لیست کارکنان یک کسب‌وکار (businessId اجباری)' })
+  @ApiQuery({ name: 'businessId', required: true })
+  findAll(
+    @Query('businessId', new ParseUUIDPipe()) businessId: string,
+    @CurrentUser() user: AuthUserDto | null,
+  ) {
+    return this.staffService.findAll(businessId, user?.id);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'دریافت کارمند با ID' })
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.staffService.findOne(id);
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({ summary: 'دریافت کارمند با ID (email/phone فقط برای مالک)' })
+  findOne(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AuthUserDto | null,
+  ) {
+    return this.staffService.findOne(id, user?.id);
   }
 
   @Patch(':id')
