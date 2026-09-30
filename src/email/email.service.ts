@@ -30,6 +30,9 @@ export class EmailService {
   }
 
   async sendOtpEmail(to: string, code: string, expiresInMinutes: number): Promise<void> {
+    if (/[\r\n]/.test(to)) {
+      throw new InternalServerErrorException('آدرس ایمیل نامعتبر است');
+    }
     const subject = 'کد ورود به رزویو';
     const html = this.buildOtpTemplate(code, expiresInMinutes);
 

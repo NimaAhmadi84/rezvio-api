@@ -68,6 +68,9 @@ export class OtpService {
   }
 
   private normalize(input: string): string {
+    if (/[\r\n\t]/.test(input)) {
+      throw new BadRequestException('شناسه معتبر نیست');
+    }
     const faToEn = (s: string) =>
       s.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
        .replace(/[٠-٩]/g, (d) => String('٠١٢٤٥٦٧٨٩'.indexOf(d)));
