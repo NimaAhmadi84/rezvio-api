@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { nanoid } from 'nanoid';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   validateImageMagicBytes,
@@ -68,6 +69,11 @@ export class UploadService {
       throw new BadRequestException('فایلی ارسال نشده است');
     }
 
+    // دفاع در عمق: userId فقط از JWT می‌آید ولی نباید مسیر storage را آلوده کند
+    if (!/^[0-9a-f-]{36}$/i.test(userId)) {
+      throw new BadRequestException('شناسه کاربر نامعتبر است');
+    }
+
     const originalSize = file.buffer.length;
 
     // Step 2: Validate size
@@ -109,7 +115,7 @@ export class UploadService {
 
     // Step 6: Generate unique filename
     const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 8);
+    const random = nanoid(8);
     const filename = `${timestamp}-${random}.${processed.format}`;
     const path = `${userId}/${filename}`;
 
