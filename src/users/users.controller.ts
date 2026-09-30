@@ -19,6 +19,7 @@ import { RequestEmailChangeDto } from './dto/request-email-change.dto';
 import { ConfirmEmailChangeDto } from './dto/confirm-email-change.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -114,6 +115,7 @@ export class UsersController {
   @Post('change-password')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({ summary: 'تغییر رمز عبور' })
   changePassword(@CurrentUser() user: AuthUserDto, @Body() dto: ChangePasswordDto, @Req() req: any) {
     // ──── سشن فعلی حفظ می‌شود؛ بقیه دستگاه‌ها پس از تغییر رمز خارج می‌شوند ────

@@ -17,6 +17,7 @@ import {
   ApiTags,
   ApiBody,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UploadService } from './upload.service';
 
@@ -45,6 +46,7 @@ export class UploadController {
 
   @Post('business-logo')
   @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: undefined,

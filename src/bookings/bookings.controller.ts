@@ -25,6 +25,7 @@ import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { IncomeStatsQueryDto } from './dto/income-stats-query.dto';
 import { BatchUpdateStatusDto } from './dto/batch-update-status.dto';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -46,6 +47,7 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'ایجاد رزرو جدید (همه کاربران احراز هویت شده)' })
   @ApiResponse({ status: 201, description: 'رزرو با موفقیت ایجاد شد' })
   @ApiResponse({ status: 409, description: 'زمان رزرو تداخل دارد' })
@@ -165,6 +167,7 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.OWNER, UserRole.ADMIN)
   @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({
     summary: 'تغییر وضعیت چند رزرو همزمان (Batch)',
     description:
