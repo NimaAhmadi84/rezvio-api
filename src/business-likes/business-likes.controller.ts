@@ -14,6 +14,7 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { BusinessLikesService } from './business-likes.service';
@@ -29,6 +30,7 @@ export class BusinessLikesController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @Post(':id/like')
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   @ApiOperation({ summary: 'Toggle لایک کسب‌وکار (افزودن/حذف)' })
   @ApiParam({ name: 'id', type: 'string', description: 'شناسه کسب‌وکار (UUID)' })
   async toggle(

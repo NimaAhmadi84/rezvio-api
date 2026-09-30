@@ -62,12 +62,13 @@ export class SessionService {
   ) {}
 
   // ──── Hash refresh token برای ذخیره امن در DB ────
-  private hashToken(token: string): string {
-    return bcrypt.hashSync(token, 10);
+  // async تا event loop بلاک نشود (bcrypt ~100ms per call)
+  private async hashToken(token: string): Promise<string> {
+    return bcrypt.hash(token, 10);
   }
 
-  private verifyTokenHash(token: string, hash: string): boolean {
-    return bcrypt.compareSync(token, hash);
+  private async verifyTokenHash(token: string, hash: string): Promise<boolean> {
+    return bcrypt.compare(token, hash);
   }
 
   // ──── Parse User-Agent برای استخراج اطلاعات دستگاه ────
@@ -127,7 +128,7 @@ export class SessionService {
   ): Promise<string> {
     const deviceInfo = this.parseDevice(userAgent);
     const geo = await this.getGeoLocation(ip);
-    const refreshTokenHash = this.hashToken(refreshToken);
+    const refreshTokenHash = await this.hashToken(refreshToken);
 
     const session = await this.prisma.userSession.create({
       data: {
@@ -190,11 +191,12 @@ export class SessionService {
 
     const deviceInfo = this.parseDevice(userAgent);
     const geo = await this.getGeoLocation(ip);
+    const refreshTokenHash = await this.hashToken(refreshToken);
 
     await this.prisma.userSession.update({
       where: { id: sessionId },
       data: {
-        refreshTokenHash: this.hashToken(refreshToken),
+        refreshTokenHash,
         expiresAt,
         lastActiveAt: new Date(),
         ipAddress: ip,
@@ -230,7 +232,7 @@ export class SessionService {
     if (!session.isActive) return { valid: false, reason: 'INACTIVE' };
     if (session.expiresAt <= new Date()) return { valid: false, reason: 'EXPIRED' };
     if (session.userId !== userId) return { valid: false, reason: 'OWNERSHIP' };
-    if (!this.verifyTokenHash(refreshToken, session.refreshTokenHash)) {
+    if (!(await this.verifyTokenHash(refreshToken, session.refreshTokenHash))) {
       return { valid: false, reason: 'HASH_MISMATCH' };
     }
     return { valid: true };
@@ -348,21 +350,6 @@ export class SessionService {
     return verified;
   }
 
-  // ──── پیدا کردن session با refresh token (برای validate) ────
-  async findSessionByRefreshToken(
-    refreshToken: string,
-  ): Promise<{ id: string; userId: string; isActive: boolean } | null> {
-    const sessions = await this.prisma.userSession.findMany({
-      where: { isActive: true, expiresAt: { gt: new Date() } },
-    });
-
-    for (const session of sessions) {
-      if (this.verifyTokenHash(refreshToken, session.refreshTokenHash)) {
-        return { id: session.id, userId: session.userId, isActive: session.isActive };
-      }
-    }
-    return null;
-  }
 
   // ──── لیست sessions فعال کاربر ────
   async getActiveSessions(

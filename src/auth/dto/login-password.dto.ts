@@ -1,10 +1,11 @@
-import { IsString, IsOptional, IsBoolean, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, MinLength, MaxLength, Matches } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class LoginPasswordDto {
   @ApiProperty({ example: 'user@example.com', description: 'ایمیل یا شماره تماس' })
   @IsString({ message: 'شناسه باید رشته باشد' })
-  @MaxLength(100)
+  @MaxLength(254, { message: 'شناسه بیش از حد طولانی است' })
+  @Matches(/^[^\r\n\t]+$/, { message: 'شناسه نباید شامل کاراکترهای کنترلی باشد' })
   identifier!: string;
 
   @ApiProperty({ example: 'StrongPass123' })

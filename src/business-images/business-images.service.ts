@@ -1,9 +1,11 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { CreateBusinessImageDto } from './dto/create-business-image.dto';
 import { UpdateBusinessImageDto } from './dto/update-business-image.dto';
 import { ReorderBusinessImagesDto } from './dto/reorder-business-images.dto';
+import { sanitizeText } from '../common/utils/sanitize.util';
 
 @Injectable()
 export class BusinessImagesService {
@@ -19,14 +21,23 @@ export class BusinessImagesService {
    * بررسی مالکیت کسب‌وکار (دفاع در عمق)
    */
   private async checkOwnership(businessId: string, userId: string): Promise<void> {
-    const business = await this.prisma.business.findUnique({
-      where: { id: businessId },
-      select: { ownerId: true },
-    });
+    const [business, user] = await Promise.all([
+      this.prisma.business.findUnique({
+        where: { id: businessId },
+        select: { ownerId: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      }),
+    ]);
 
     if (!business) {
       throw new NotFoundException('کسب‌وکار یافت نشد');
     }
+
+    // ADMIN bypass
+    if (user?.role === UserRole.ADMIN) return;
 
     if (business.ownerId !== userId) {
       throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
@@ -79,7 +90,7 @@ export class BusinessImagesService {
     const image = await this.prisma.businessImage.create({
       data: {
         url: dto.url,
-        caption: dto.caption,
+        caption: dto.caption ? sanitizeText(dto.caption) : undefined,
         sortOrder,
         businessId,
       },
@@ -129,7 +140,7 @@ export class BusinessImagesService {
     }
 
     const data: any = {};
-    if (dto.caption !== undefined) data.caption = dto.caption;
+    if (dto.caption !== undefined) data.caption = sanitizeText(dto.caption);
     if (dto.sortOrder !== undefined) data.sortOrder = dto.sortOrder;
 
     const updated = await this.prisma.businessImage.update({

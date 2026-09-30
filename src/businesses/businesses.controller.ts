@@ -6,6 +6,7 @@ import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
 import { SearchBusinessesDto } from './dto/search-businesses.dto';
 import { RecordViewDto } from './dto/record-view.dto';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -25,6 +26,7 @@ export class BusinessesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.CUSTOMER, UserRole.OWNER, UserRole.ADMIN)
   @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({
     summary: 'ساخت کسب‌وکار جدید + ارتقا خودکار CUSTOMER به OWNER',
     description:
@@ -113,9 +115,16 @@ export class BusinessesController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'دریافت کسب‌وکار با ID' })
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.businessesService.findOne(id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'دریافت کسب‌وکار با ID (فقط مالک یا ADMIN)' })
+  @ApiResponse({ status: 403, description: 'دسترسی غیرمجاز' })
+  findOne(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AuthUserDto,
+  ) {
+    return this.businessesService.findOne(id, user.id, user.role);
   }
 
   @Patch(':id')

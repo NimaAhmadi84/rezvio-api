@@ -6,6 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { sanitizeText } from '../common/utils/sanitize.util';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { QueryReviewsDto } from './dto/query-reviews.dto';
 import { ReviewVoteKind } from '@prisma/client';
@@ -31,13 +32,20 @@ export class BusinessReviewsService {
   async create(businessId: string, userId: string, dto: CreateReviewDto) {
     await this.ensureBusinessExists(businessId);
 
+    const sanitized = sanitizeText(dto.text);
+    if (sanitized.length < 5) {
+      throw new BadRequestException(
+        'متن نظر پس از پاک‌سازی کمتر از ۵ کاراکتر است',
+      );
+    }
+
     // نظر چندگانه per user مجاز است (طبق تصمیم صاحب پروژه)
     return this.prisma.businessReview.create({
       data: {
         businessId,
         userId,
         rating: dto.rating,
-        text: dto.text,
+        text: sanitized,
       },
       include: {
         user: { select: { id: true, name: true } },
@@ -167,14 +175,17 @@ export class BusinessReviewsService {
    * رأی تکراری = حذف، رأی متضاد = جایگزینی
    */
   async vote(businessId: string, reviewId: string, userId: string, kind: ReviewVoteKind) {
-    // بررسی تعلق نظر به کسب‌وکار
+    // بررسی تعلق نظر به کسب‌وکار + self-vote block
     const review = await this.prisma.businessReview.findUnique({
       where: { id: reviewId },
-      select: { businessId: true },
+      select: { businessId: true, userId: true },
     });
     if (!review) throw new NotFoundException('نظر یافت نشد');
     if (review.businessId !== businessId) {
       throw new ForbiddenException('این نظر متعلق به این کسب‌وکار نیست');
+    }
+    if (review.userId === userId) {
+      throw new ForbiddenException('نمی‌توانید به نظر خودتان رأی دهید');
     }
 
         // پیدا کردن رأی فعلی
@@ -254,8 +265,15 @@ export class BusinessReviewsService {
       throw new ConflictException('این نظر قبلاً پاسخ داده شده است');
     }
 
+    const sanitized = sanitizeText(text);
+    if (sanitized.length < 5) {
+      throw new BadRequestException(
+        'متن پاسخ پس از پاک‌سازی کمتر از ۵ کاراکتر است',
+      );
+    }
+
     return this.prisma.reviewReply.create({
-      data: { reviewId, text },
+      data: { reviewId, text: sanitized },
     });
   }
 }

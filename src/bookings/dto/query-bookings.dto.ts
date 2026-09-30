@@ -1,8 +1,10 @@
 import {
   IsOptional,
   IsString,
+  IsIn,
   IsDateString,
   IsInt,
+  MaxLength,
   Min,
   Max,
 } from 'class-validator';
@@ -46,9 +48,12 @@ export class QueryBookingsDto {
     description:
       'فیلتر وضعیت: ALL | PENDING | CONFIRMED | COMPLETED | CANCELLED | NO_SHOW',
     example: 'ALL',
+    enum: ['ALL', 'PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'],
   })
   @IsOptional()
-  @IsString()
+  @IsIn(['ALL', 'PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'], {
+    message: 'وضعیت نامعتبر است',
+  })
   status?: string;
 
   @ApiPropertyOptional({
@@ -56,6 +61,7 @@ export class QueryBookingsDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(100, { message: 'عبارت جستجو نباید بیش از ۱۰۰ کاراکتر باشد' })
   q?: string;
 
   @ApiPropertyOptional({ default: 1, description: 'شماره صفحه (از ۱)' })

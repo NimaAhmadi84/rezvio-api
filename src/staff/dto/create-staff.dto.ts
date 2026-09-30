@@ -1,5 +1,6 @@
 import {
   IsString,
+  IsUUID,
   IsEmail,
   IsOptional,
   MinLength,
@@ -22,6 +23,7 @@ export class CreateStaffDto {
 
   @ApiPropertyOptional({ example: 'ali@example.com' })
   @IsEmail({}, { message: 'ایمیل نامعتبر است' })
+  @MaxLength(254, { message: 'ایمیل بیش از حد طولانی است' })
   @IsOptional()
   email?: string;
 
@@ -36,6 +38,6 @@ export class CreateStaffDto {
   phone!: string;
 
   @ApiProperty({ description: 'شناسه کسب‌وکار' })
-  @IsString()
+  @IsUUID('4', { message: 'شناسه کسب‌وکار نامعتبر است' })
   businessId!: string;
 }

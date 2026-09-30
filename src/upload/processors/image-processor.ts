@@ -30,7 +30,9 @@ export async function processBusinessLogo(buffer: Buffer): Promise<ProcessedImag
   const originalHeight = metadata.height || 0;
 
   // شروع pipeline پردازش
-  let pipeline = sharp(buffer)
+  let pipeline = sharp(buffer, {
+    limitInputPixels: 268402689, // ~16384×16384 — جلوگیری از decompression bomb
+  })
     // Auto-rotate از EXIF (خیلی مهم برای موبایل)
     .rotate();
 

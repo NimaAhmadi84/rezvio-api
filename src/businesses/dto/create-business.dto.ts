@@ -31,9 +31,16 @@ export class CreateBusinessDto {
   @MaxLength(500, { message: 'آدرس نباید بیش از ۵۰۰ کاراکتر باشد' })
   address?: string;
 
-  @ApiPropertyOptional({ example: '02112345678' })
+  @ApiPropertyOptional({
+    example: '02112345678',
+    description: 'شماره تماس کسب‌وکار (ثابت یا موبایل، ۱۰-۱۵ کاراکتر)',
+  })
   @IsString()
   @IsOptional()
+  @MaxLength(15, { message: 'شماره تماس نباید بیش از ۱۵ کاراکتر باشد' })
+  @Matches(/^0\d{9,14}$/, {
+    message: 'شماره تماس باید با ۰ شروع و بین ۱۰ تا ۱۵ رقم باشد',
+  })
   phone?: string;
 
   @ApiPropertyOptional({

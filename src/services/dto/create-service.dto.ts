@@ -1,4 +1,4 @@
-import { IsString, IsInt, IsNumber, IsOptional, MinLength, MaxLength, Min, Max } from 'class-validator';
+import { IsString, IsUUID, IsInt, IsNumber, IsOptional, MinLength, MaxLength, Min, Max } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateServiceDto {
@@ -14,9 +14,10 @@ export class CreateServiceDto {
   @MaxLength(500, { message: 'توضیحات نباید بیش از ۵۰۰ کاراکتر باشد' })
   description?: string;
 
-  @ApiProperty({ example: 30, description: 'مدت زمان خدمت (دقیقه)' })
+  @ApiProperty({ example: 30, description: 'مدت زمان خدمت (دقیقه، حداکثر ۴۸۰ = ۸ ساعت)' })
   @IsInt({ message: 'مدت زمان باید عدد صحیح باشد' })
   @Min(5, { message: 'مدت زمان باید حداقل ۵ دقیقه باشد' })
+  @Max(480, { message: 'مدت زمان نباید بیش از ۴۸۰ دقیقه (۸ ساعت) باشد' })
   durationMinutes!: number;
 
   @ApiProperty({ example: 150000, description: 'قیمت خدمت (تومان)' })
@@ -26,6 +27,6 @@ export class CreateServiceDto {
   price!: number;
 
   @ApiProperty({ description: 'شناسه کسب‌وکار' })
-  @IsString()
+  @IsUUID('4', { message: 'شناسه کسب‌وکار نامعتبر است' })
   businessId!: string;
 }

@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { sanitizeText } from '../common/utils/sanitize.util';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
@@ -240,7 +241,7 @@ export class BookingsService {
               serviceId: dto.serviceId,
               startTime,
               endTime,
-              notes: dto.notes,
+              notes: dto.notes ? sanitizeText(dto.notes) : undefined,
               status: BookingStatus.PENDING,
               paymentMethod: dto.paymentMethod ?? PaymentMethod.IN_PERSON,
             },
@@ -251,7 +252,8 @@ export class BookingsService {
         },
       );
 
-      return this.findOne(booking.id);
+      // caller داخلی: کاربر خودش رزرو رو ساخته → دسترسی CUSTOMER (owner خودش)
+      return this.findOne(booking.id, userId, 'CUSTOMER');
     } catch (error) {
       if (error instanceof ConflictException) {
         throw error;
@@ -454,7 +456,19 @@ export class BookingsService {
   /**
    * دریافت یک رزرو با ID
    */
-  async findOne(id: string) {
+  /**
+   * دریافت جزئیات رزرو با ownership check.
+   *
+   * دسترسی:
+   *   - CUSTOMER: فقط رزروهای خودش
+   *   - OWNER: فقط رزروهای کسب‌وکارهای خودش
+   *   - ADMIN: همه
+   *
+   * @param id رزرو
+   * @param userId کاربر جاری
+   * @param userRole نقش کاربر
+   */
+  async findOne(id: string, userId: string, userRole: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
@@ -463,6 +477,7 @@ export class BookingsService {
             id: true,
             name: true,
             slug: true,
+            ownerId: true,
           },
         },
         customer: {
@@ -491,6 +506,20 @@ export class BookingsService {
 
     if (!booking) {
       throw new NotFoundException('رزرو یافت نشد');
+    }
+
+    const isCustomer = userRole === 'CUSTOMER';
+    const isOwner = userRole === 'OWNER';
+    const isAdmin = userRole === 'ADMIN';
+
+    if (isCustomer && booking.customerId !== userId) {
+      throw new ForbiddenException('شما مالک این رزرو نیستید');
+    }
+    if (isOwner && booking.business.ownerId !== userId) {
+      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
+    }
+    if (!isCustomer && !isOwner && !isAdmin) {
+      throw new ForbiddenException('دسترسی غیرمجاز');
     }
 
     return booking;
@@ -694,7 +723,7 @@ export class BookingsService {
       );
     }
 
-    const sanitizedReason = this.sanitizeText(dto.reason);
+    const sanitizedReason = sanitizeText(dto.reason);
 
     if (sanitizedReason.length < 10) {
       throw new BadRequestException(
@@ -827,10 +856,6 @@ export class BookingsService {
   /**
    * Sanitize متن — حذف تگ‌های HTML + فشرده‌سازی فضای خالی
    */
-  private sanitizeText(input: string): string {
-    const noHtml = input.replace(/<[^>]*>/g, '');
-    return noHtml.replace(/\s+/g, ' ').trim();
-  }
 
   /**
    * دریافت رزروهای پیش‌رو برای OWNER

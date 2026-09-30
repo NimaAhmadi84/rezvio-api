@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
 import { SearchBusinessesDto } from './dto/search-businesses.dto';
+import { sanitizeText } from '../common/utils/sanitize.util';
 
 
 @Injectable()
@@ -144,7 +145,7 @@ export class BusinessesService {
             slug,
             address: dto.address,
             phone: dto.phone,
-            description: dto.description,
+            description: dto.description ? sanitizeText(dto.description) : undefined,
             logoUrl: dto.logoUrl,
             categoryId: dto.categoryId,
             province: dto.province,
@@ -267,7 +268,7 @@ export class BusinessesService {
         slug,
         address: dto.address,
         phone: dto.phone,
-        description: dto.description,
+        description: dto.description ? sanitizeText(dto.description) : undefined,
         logoUrl: dto.logoUrl,
         categoryId: dto.categoryId,
         province: dto.province,
@@ -339,20 +340,40 @@ export class BusinessesService {
     }
   }
 
+  /**
+   * لیست عمومی کسب‌وکارها — فقط برای مصرف عمومی/marketing.
+   *
+   * - بدون owner info (اطلاعات مالک متعلق به خودش است)
+   * - سقف 100 رکورد (جلوگیری از DoS با لیست بی‌نهایت)
+   * - مرتب‌سازی بر اساس جدیدترین
+   *
+   * ⚠️ برای فیلتر/جستجو/صفحه‌بندی از GET /businesses/search استفاده کن.
+   */
   async findAll() {
     return this.prisma.business.findMany({
+      take: 100,
+      orderBy: { createdAt: 'desc' },
       include: {
-        owner: { select: { id: true, name: true, email: true } },
         _count: { select: { services: true, staff: true, bookings: true } },
       },
     });
   }
 
-  async findOne(id: string) {
+  /**
+   * دریافت جزئیات کسب‌وکار برای داشبورد مالک.
+   *
+   * دسترسی:
+   *   - OWNER: فقط کسب‌وکارهای خودش
+   *   - ADMIN: همه
+   *
+   * توجه: owner.email در پاسخ حذف شده — اطلاعات حساس که فقط صاحب
+   * خودش (در /users/me) می‌بیند.
+   */
+  async findOne(id: string, userId: string, userRole: string) {
     const business = await this.prisma.business.findUnique({
       where: { id },
       include: {
-        owner: { select: { id: true, name: true, email: true } },
+        owner: { select: { id: true, name: true } },
         services: true,
         staff: true,
         businessHours: true,
@@ -362,6 +383,16 @@ export class BusinessesService {
       },
     });
     if (!business) throw new NotFoundException('کسب‌وکار یافت نشد');
+
+    const isOwner = userRole === 'OWNER';
+    const isAdmin = userRole === 'ADMIN';
+    if (isOwner && business.ownerId !== userId) {
+      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
+    }
+    if (!isOwner && !isAdmin) {
+      throw new ForbiddenException('دسترسی غیرمجاز');
+    }
+
     return business;
   }
 
@@ -451,36 +482,46 @@ export class BusinessesService {
     return { counted: true };
   }
 
+  /**
+   * بررسی دسترسی به کسب‌وکار.
+   *
+   * - ADMIN: دسترسی کامل به همه کسب‌وکارها (bypass)
+   * - OWNER/CUSTOMER: فقط کسب‌وکارهای خودشون (ownerId === userId)
+   *
+   * role کاربر از DB خونده می‌شه چون JWT ممکنه role قدیمی داشته باشه
+   * (مثلاً کاربر CUSTOMER بود و بعد OWNER شد).
+   */
   async checkOwnership(businessId: string, userId: string): Promise<void> {
-    const business = await this.prisma.business.findUnique({
-      where: { id: businessId },
-      select: { ownerId: true },
-    });
+    const [business, user] = await Promise.all([
+      this.prisma.business.findUnique({
+        where: { id: businessId },
+        select: { ownerId: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      }),
+    ]);
+
     if (!business) throw new NotFoundException('کسب‌وکار یافت نشد');
-    if (business.ownerId !== userId)
-      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
-  }
 
-  async update(id: string, userId: string, dto: UpdateBusinessDto) {
-    const business = await this.prisma.business.findUnique({
-      where: { id },
-      select: { ownerId: true },
-    });
-
-    if (!business) {
-      throw new NotFoundException('کسب‌وکار یافت نشد');
-    }
+    // ADMIN bypass — دسترسی کامل به همه کسب‌وکارها
+    if (user?.role === UserRole.ADMIN) return;
 
     if (business.ownerId !== userId) {
       throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
     }
+  }
+
+  async update(id: string, userId: string, dto: UpdateBusinessDto) {
+    await this.checkOwnership(id, userId);
 
     const data: any = {};
 
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.phone !== undefined) data.phone = dto.phone;
-    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.description !== undefined) data.description = sanitizeText(dto.description);
     if (dto.logoUrl !== undefined) data.logoUrl = dto.logoUrl;
     if (dto.categoryId !== undefined) data.categoryId = dto.categoryId;
     if (dto.province !== undefined) data.province = dto.province;
@@ -734,12 +775,12 @@ export class BusinessesService {
    * - تعداد بازدید صفحه
    */
   async getStats(businessId: string, userId: string) {
-    // Ownership check
+    await this.checkOwnership(businessId, userId);
+
     const business = await this.prisma.business.findUnique({
       where: { id: businessId },
       select: {
         id: true,
-        ownerId: true,
         viewsCount: true,
         likesCount: true,
         bookingsCount: true,
@@ -748,9 +789,6 @@ export class BusinessesService {
 
     if (!business) {
       throw new NotFoundException('کسب‌وکار یافت نشد');
-    }
-    if (business.ownerId !== userId) {
-      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
     }
 
     // شمارش‌های موازی برای performance

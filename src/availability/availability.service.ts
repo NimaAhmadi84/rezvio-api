@@ -10,6 +10,7 @@ import { CreateBusinessHourDto } from './dto/create-business-hour.dto';
 import { CreateHolidayDto } from './dto/create-holiday.dto';
 import { CreateBatchHolidayDto } from './dto/create-batch-holiday.dto';
 import { BusinessesService } from '../businesses/businesses.service';
+import { sanitizeText } from '../common/utils/sanitize.util';
 
 // ──── UTC Date Helpers (جلوگیری از timezone drift ایران) ────
 // چرا؟ new Date('2026-09-15') در ایران می‌شود 2026-09-14T20:30:00Z (یک روز قبل)
@@ -118,7 +119,7 @@ export class AvailabilityService {
       data: {
         businessId: dto.businessId,
         date: parseISOtoUTC(dto.date),
-        reason: dto.reason,
+        reason: dto.reason ? sanitizeText(dto.reason) : undefined,
       },
     });
 
@@ -206,7 +207,7 @@ export class AvailabilityService {
         data: newDates.map((date) => ({
           businessId: dto.businessId,
           date,
-          reason: dto.reason,
+          reason: dto.reason ? sanitizeText(dto.reason) : undefined,
         })),
         skipDuplicates: true,
       });
@@ -222,7 +223,7 @@ export class AvailabilityService {
       created: result.count,
       skipped,
       total: dates.length,
-      reason: dto.reason || null,
+      reason: dto.reason ? sanitizeText(dto.reason) : null,
       startDate: dto.startDate,
       endDate: dto.endDate,
     };

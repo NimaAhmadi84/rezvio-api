@@ -31,11 +31,20 @@ export class StaffService {
     return staff;
   }
 
-  async findAll(businessId?: string) {
-    const where = businessId ? { businessId } : {};
+  async findAll(businessId: string, requesterId?: string) {
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: { ownerId: true },
+    });
 
-    return this.prisma.staff.findMany({
-      where,
+    if (!business) {
+      throw new NotFoundException('کسب‌وکار یافت نشد');
+    }
+
+    const isOwner = !!requesterId && business.ownerId === requesterId;
+
+    const staff = await this.prisma.staff.findMany({
+      where: { businessId },
       include: {
         business: {
           select: {
@@ -58,9 +67,13 @@ export class StaffService {
         },
       },
     });
+
+    // email/phone فقط برای مالک کسب‌وکار
+    if (isOwner) return staff;
+    return staff.map(({ email, phone, ...rest }) => rest);
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, requesterId?: string) {
     const staff = await this.prisma.staff.findUnique({
       where: { id },
       include: {
@@ -69,6 +82,7 @@ export class StaffService {
             id: true,
             name: true,
             slug: true,
+            ownerId: true,
           },
         },
         services: {
@@ -90,7 +104,19 @@ export class StaffService {
       throw new NotFoundException('کارمند یافت نشد');
     }
 
-    return staff;
+    const isOwner = !!requesterId && staff.business.ownerId === requesterId;
+
+    // email/phone فقط برای مالک کسب‌وکار
+    if (isOwner) {
+      const { business, ...rest } = staff;
+      return { ...rest, business: { id: business.id, name: business.name, slug: business.slug } };
+    }
+
+    const { email, phone, business, ...rest } = staff;
+    return {
+      ...rest,
+      business: { id: business.id, name: business.name, slug: business.slug },
+    };
   }
 
   async update(id: string, userId: string, dto: UpdateStaffDto) {

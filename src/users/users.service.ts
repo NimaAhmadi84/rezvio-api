@@ -27,7 +27,10 @@ const COMMON_PASSWORD_BLACKLIST = [
 ];
 
 // ──── فیلدهای برگشتی پس از تغییر ایمیل (مشترک بین هر دو مسیر) ────
-const EMAIL_CHANGE_SELECT = {
+// ──── شکل واحد کاربر امن (بدون password) — همه‌جا یکسان ────
+// هر findUnique/findFirst که قراره خروجی‌اش به بیرون بره باید از این استفاده کنه
+// یا با select صریح متناظر. هرگز password را select نکن.
+const SAFE_USER_SELECT = {
   id: true,
   email: true,
   name: true,
@@ -36,7 +39,9 @@ const EMAIL_CHANGE_SELECT = {
   role: true,
   createdAt: true,
   updatedAt: true,
-};
+} as const;
+
+const EMAIL_CHANGE_SELECT = SAFE_USER_SELECT;
 
 @Injectable()
 export class UsersService {
@@ -119,16 +124,7 @@ export class UsersService {
   async findOne(id: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        nationalId: true,
-        role: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: SAFE_USER_SELECT,
     });
 
     if (!user) {
@@ -138,30 +134,34 @@ export class UsersService {
     return user;
   }
 
+  /**
+   * پیدا کردن کاربر با ایمیل — شامل password برای login verification.
+   * ⚠️ خروجی این متد را هرگز مستقیم به controller نفرست — حتماً از toAuthUserDto رد کن.
+   */
   async findByEmail(email: string) {
     return this.prisma.user.findUnique({
       where: { email },
+      select: {
+        ...SAFE_USER_SELECT,
+        password: true, // ← فقط برای bcrypt.compare در auth.service
+      },
     });
   }
 
   async update(id: string, dto: UpdateUserDto) {
     await this.findOne(id);
 
-    if (dto.password) {
-      dto.password = await bcrypt.hash(dto.password, 10);
+    // DTO را mutate نکن — یه کپی بساز
+    const data: UpdateUserDto = { ...dto };
+    if (data.password) {
+      data.password = await bcrypt.hash(data.password, 10);
     }
 
+    // select از SAFE_USER_SELECT — قبلاً phone و nationalId گم می‌شدند
     const user = await this.prisma.user.update({
       where: { id },
-      data: dto,
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      data,
+      select: SAFE_USER_SELECT,
     });
 
     return user;
@@ -180,12 +180,17 @@ export class UsersService {
   /**
    * پیدا کردن کاربر با ایمیل یا شماره
    */
+  /**
+   * پیدا کردن کاربر با ایمیل یا موبایل — شامل password برای login verification.
+   * ⚠️ خروجی این متد را هرگز مستقیم به controller نفرست — حتماً از toAuthUserDto رد کن.
+   */
   async findByEmailOrPhone(identifier: string) {
     const isEmail = identifier.includes('@');
+    const select = { ...SAFE_USER_SELECT, password: true };
     if (isEmail) {
-      return this.prisma.user.findUnique({ where: { email: identifier } });
+      return this.prisma.user.findUnique({ where: { email: identifier }, select });
     }
-    return this.prisma.user.findUnique({ where: { phone: identifier } });
+    return this.prisma.user.findUnique({ where: { phone: identifier }, select });
   }
 
   /**

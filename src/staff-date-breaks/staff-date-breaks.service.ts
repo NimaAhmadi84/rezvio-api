@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StaffDateBreakDto } from './dto/create-staff-date-breaks.dto';
+import { sanitizeText } from '../common/utils/sanitize.util';
 
 const timeToMinutes = (time: string): number => {
   const [h, m] = time.split(':').map(Number);
@@ -245,7 +246,7 @@ export class StaffDateBreaksService {
           date: parseDateToUTC(b.date),
           startTime: b.startTime,
           endTime: b.endTime,
-          reason: b.reason?.trim() ? b.reason.trim() : null,
+          reason: b.reason?.trim() ? sanitizeText(b.reason) : null,
         })),
       });
 
