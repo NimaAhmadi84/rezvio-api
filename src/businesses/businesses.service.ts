@@ -348,11 +348,21 @@ export class BusinessesService {
     });
   }
 
-  async findOne(id: string) {
+  /**
+   * دریافت جزئیات کسب‌وکار برای داشبورد مالک.
+   *
+   * دسترسی:
+   *   - OWNER: فقط کسب‌وکارهای خودش
+   *   - ADMIN: همه
+   *
+   * توجه: owner.email در پاسخ حذف شده — اطلاعات حساس که فقط صاحب
+   * خودش (در /users/me) می‌بیند.
+   */
+  async findOne(id: string, userId: string, userRole: string) {
     const business = await this.prisma.business.findUnique({
       where: { id },
       include: {
-        owner: { select: { id: true, name: true, email: true } },
+        owner: { select: { id: true, name: true } },
         services: true,
         staff: true,
         businessHours: true,
@@ -362,6 +372,16 @@ export class BusinessesService {
       },
     });
     if (!business) throw new NotFoundException('کسب‌وکار یافت نشد');
+
+    const isOwner = userRole === 'OWNER';
+    const isAdmin = userRole === 'ADMIN';
+    if (isOwner && business.ownerId !== userId) {
+      throw new ForbiddenException('شما مالک این کسب‌وکار نیستید');
+    }
+    if (!isOwner && !isAdmin) {
+      throw new ForbiddenException('دسترسی غیرمجاز');
+    }
+
     return business;
   }
 

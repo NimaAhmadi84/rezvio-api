@@ -113,9 +113,16 @@ export class BusinessesController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'دریافت کسب‌وکار با ID' })
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.businessesService.findOne(id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'دریافت کسب‌وکار با ID (فقط مالک یا ADMIN)' })
+  @ApiResponse({ status: 403, description: 'دسترسی غیرمجاز' })
+  findOne(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AuthUserDto,
+  ) {
+    return this.businessesService.findOne(id, user.id, user.role);
   }
 
   @Patch(':id')
