@@ -339,10 +339,20 @@ export class BusinessesService {
     }
   }
 
+  /**
+   * لیست عمومی کسب‌وکارها — فقط برای مصرف عمومی/marketing.
+   *
+   * - بدون owner info (اطلاعات مالک متعلق به خودش است)
+   * - سقف 100 رکورد (جلوگیری از DoS با لیست بی‌نهایت)
+   * - مرتب‌سازی بر اساس جدیدترین
+   *
+   * ⚠️ برای فیلتر/جستجو/صفحه‌بندی از GET /businesses/search استفاده کن.
+   */
   async findAll() {
     return this.prisma.business.findMany({
+      take: 100,
+      orderBy: { createdAt: 'desc' },
       include: {
-        owner: { select: { id: true, name: true, email: true } },
         _count: { select: { services: true, staff: true, bookings: true } },
       },
     });
