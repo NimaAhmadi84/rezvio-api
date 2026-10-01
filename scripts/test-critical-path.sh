@@ -25,7 +25,6 @@ ok()   { echo -e "${GREEN}✅ $1${NC}"; PASS=$((PASS+1)); }
 ko()   { echo -e "${RED}❌ $1${NC}"; FAIL=$((FAIL+1)); }
 info() { echo -e "${YEL}ℹ️  $1${NC}"; }
 
-# ─── cleanup trap (cancel booked reservations) ───
 BOOKED_ID=""
 ACCESS_TOKEN=""
 cleanup() {
@@ -43,11 +42,23 @@ echo "Phase 3 — Critical Path Test"
 echo "API: $API_URL"
 echo "════════════════════════════════════════════════════════"
 
+# ──── Session reuse (device limit = 3) ────
+# با کش کردن sessionId و فرستادن X-Current-Session-Id در login،
+# سشن قبلی replace-in-place میشه و سقف مصرف نمیشه.
+SESSION_FILE="$(dirname "$0")/.test-session-id"
+PREV_SESSION=""
+[ -f "$SESSION_FILE" ] && PREV_SESSION=$(cat "$SESSION_FILE")
+
 # ──────── Step 1: Login ────────
 echo ""
 info "Step 1: Login with test account"
+LOGIN_HEADERS=(-H "Content-Type: application/json")
+if [ -n "$PREV_SESSION" ]; then
+  LOGIN_HEADERS+=(-H "X-Current-Session-Id: $PREV_SESSION")
+fi
+
 LOGIN=$(curl -s -X POST "$API_URL/auth/login-password" \
-  -H "Content-Type: application/json" \
+  "${LOGIN_HEADERS[@]}" \
   -d "{\"identifier\":\"$TEST_EMAIL\",\"password\":\"$TEST_PASSWORD\",\"rememberMe\":false}")
 
 ACCESS_TOKEN=$(echo "$LOGIN" | jq -r '.accessToken // empty')
@@ -56,6 +67,7 @@ SESSION_ID=$(echo "$LOGIN" | jq -r '.sessionId // empty')
 ROLE=$(echo "$LOGIN" | jq -r '.user.role // empty')
 
 if [ -n "$ACCESS_TOKEN" ] && [ -n "$REFRESH_TOKEN" ]; then
+  [ -n "$SESSION_ID" ] && echo "$SESSION_ID" > "$SESSION_FILE"
   ok "Login successful (role: $ROLE, sessionId: ${SESSION_ID:0:8}...)"
 else
   ko "Login failed — raw response: $LOGIN"
@@ -73,7 +85,7 @@ else
   ko "/auth/me failed — raw: $ME"
 fi
 
-# ──────── Step 3: get business by slug ────────
+# ──────── Step 3: business by slug ────────
 echo ""
 info "Step 3: GET business by slug ($BUSINESS_SLUG)"
 BIZ=$(curl -s "$API_URL/businesses/slug/$BUSINESS_SLUG")
@@ -88,19 +100,19 @@ else
   exit 1
 fi
 
-# ──────── Step 4: find an available slot ────────
+# ──────── Step 4: available slot ────────
 echo ""
 info "Step 4: find available slot (next 7 days)"
 SLOT=""
 SLOT_DATE=""
 for i in 1 2 3 4 5 6 7; do
-  DATE=$(date -u -d "+$i days" +%Y-%m-%d 2>/dev/null || date -u -v+"${i}"d +%Y-%m-%d 2>/dev/null)
+  DATE=$(date -u -d "+$i days" +%Y-%m-%d 2>/dev/null)
   if [ -z "$DATE" ]; then
     ko "date command does not support relative dates"
     exit 1
   fi
   SLOT_RESP=$(curl -s "$API_URL/businesses/$BUSINESS_SLUG/slots?serviceId=$SERVICE_ID&staffId=$STAFF_ID&date=$DATE")
-  SLOT=$(echo "$SLOT_RESP" | jq -r '.slots[0].startTime // .slots[0] // empty')
+  SLOT=$(echo "$SLOT_RESP" | jq -r '.slots[0].startTime // empty')
   if [ -n "$SLOT" ]; then
     SLOT_DATE="$DATE"
     break
@@ -111,7 +123,6 @@ if [ -n "$SLOT" ]; then
   ok "Slot found on $SLOT_DATE: $SLOT"
 else
   ko "No slot found in next 7 days — aborting booking test"
-  # don't exit — other tests can still run
 fi
 
 # ──────── Step 5: create booking ────────
@@ -144,7 +155,7 @@ else
   ko "My bookings empty — raw: $MY"
 fi
 
-# ──────── Step 7: cancel with reason ────────
+# ──────── Step 7: cancel ────────
 echo ""
 info "Step 7: PATCH cancel-with-reason"
 if [ -n "$BOOKED_ID" ]; then
@@ -155,7 +166,7 @@ if [ -n "$BOOKED_ID" ]; then
   CANCEL_STATUS=$(echo "$CANCEL" | jq -r '.status // empty')
   if [ "$CANCEL_STATUS" = "CANCELLED" ]; then
     ok "Booking cancelled (status: CANCELLED)"
-    BOOKED_ID="" # cleanup already done
+    BOOKED_ID=""
   else
     ko "Cancel failed — raw: $CANCEL"
   fi
@@ -163,7 +174,7 @@ else
   info "skipped (no booking)"
 fi
 
-# ──────── Step 8: refresh token ────────
+# ──────── Step 8: refresh ────────
 echo ""
 info "Step 8: POST /auth/refresh"
 REFRESH=$(curl -s -X POST "$API_URL/auth/refresh" \

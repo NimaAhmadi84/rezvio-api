@@ -228,9 +228,10 @@ export class BookingsService {
           });
 
           if (overlappingBooking) {
-            throw new ConflictException(
-              'این زمان قبلاً رزرو شده است. لطفاً زمان دیگری را انتخاب کنید',
-            );
+            throw new ConflictException({
+              message: 'این زمان قبلاً رزرو شده است. لطفاً زمان دیگری را انتخاب کنید',
+              code: 'BOOKING_OVERLAP',
+            });
           }
 
           return tx.booking.create({
