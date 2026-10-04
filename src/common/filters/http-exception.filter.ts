@@ -63,14 +63,29 @@ export class HttpExceptionFilter implements ExceptionFilter {
       'code' in exception &&
       typeof (exception as { code: unknown }).code === 'string'
     ) {
-      const prismaCode = (exception as { code: string }).code;
-      switch (prismaCode) {
+      // Prisma 7 + adapter-pg: بعضی خطاهای Postgres داخل P2039 wrap می‌شن
+      // originalCode واقعی در meta.driverAdapterError.cause.code ذخیره شده
+      const errObj = exception as {
+        code: string;
+        meta?: {
+          driverAdapterError?: {
+            cause?: { originalCode?: string; code?: string };
+          };
+        };
+      };
+      const prismaCode = errObj.code;
+      const driverCause = errObj.meta?.driverAdapterError?.cause;
+      const effectiveCode = driverCause?.originalCode ?? driverCause?.code ?? prismaCode;
+
+      switch (effectiveCode) {
         case 'P2002':
+        case '23505': // Postgres unique_violation (unwrap شده)
           statusCode = HttpStatus.CONFLICT;
           message = 'این مقدار قبلاً ثبت شده است';
           code = 'DUPLICATE_ENTRY';
           break;
         case 'P2003':
+        case '23503': // Postgres foreign_key_violation (unwrap شده)
           statusCode = HttpStatus.BAD_REQUEST;
           message = 'ارجاع نامعتبر به منبع مرتبط';
           code = 'FOREIGN_KEY_VIOLATION';
@@ -87,10 +102,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
           message = 'ارتباط با دیتابیس برقرار نشد. لطفاً بعداً تلاش کنید';
           code = 'DB_UNAVAILABLE';
           break;
+        case '23P01': // Postgres exclusion_violation (booking overlap)
+          statusCode = HttpStatus.CONFLICT;
+          message = 'این زمان قبلاً رزرو شده است. لطفاً زمان دیگری را انتخاب کنید';
+          code = 'BOOKING_OVERLAP';
+          break;
         default:
           statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
           message = 'خطای دیتابیس';
-          code = prismaCode;
+          code = effectiveCode;
       }
     }
     // ──── خطای غیرمنتظره ────

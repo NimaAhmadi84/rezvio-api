@@ -1,4 +1,4 @@
-import { IsString, IsUUID, IsInt, IsNumber, IsOptional, MinLength, MaxLength, Min, Max } from 'class-validator';
+import { IsString, IsUUID, IsInt, IsOptional, MinLength, MaxLength, Min, Max } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateServiceDto {
@@ -21,7 +21,7 @@ export class CreateServiceDto {
   durationMinutes!: number;
 
   @ApiProperty({ example: 150000, description: 'قیمت خدمت (تومان)' })
-  @IsNumber({}, { message: 'قیمت باید عدد باشد' })
+  @IsInt({ message: 'قیمت باید عدد صحیح باشد' })
   @Min(10000, { message: 'حداقل قیمت ۱۰,۰۰۰ تومان است' })
   @Max(1000000000, { message: 'حداکثر قیمت ۱,۰۰۰,۰۰۰,۰۰۰ تومان است' })
   price!: number;

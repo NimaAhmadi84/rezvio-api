@@ -163,7 +163,7 @@ model Service {
   name            String
   description     String?
   durationMinutes Int
-  price           Float
+  price           Int
   businessId      String
   business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   createdAt       DateTime @default(now())
