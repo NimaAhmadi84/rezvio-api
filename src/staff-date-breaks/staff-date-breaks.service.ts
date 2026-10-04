@@ -7,19 +7,14 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StaffDateBreakDto } from './dto/create-staff-date-breaks.dto';
 import { sanitizeText } from '../common/utils/sanitize.util';
+import { getTehranTodayISO } from '../common/utils/tehran-time.util';
 
 const timeToMinutes = (time: string): number => {
   const [h, m] = time.split(':').map(Number);
   return h * 60 + m;
 };
 
-const getLocalTodayISO = (): string => {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-};
+
 
 const parseDateToUTC = (iso: string): Date => {
   const [y, m, d] = iso.split('-').map(Number);
@@ -62,7 +57,7 @@ export class StaffDateBreaksService {
   }
 
   private validateBreaks(breaks: StaffDateBreakDto[]) {
-    const todayIso = getLocalTodayISO();
+    const todayIso = getTehranTodayISO();
     const perDate = new Map<string, StaffDateBreakDto[]>();
 
     for (let i = 0; i < breaks.length; i++) {

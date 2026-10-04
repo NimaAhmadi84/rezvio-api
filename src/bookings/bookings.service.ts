@@ -16,6 +16,11 @@ import { BatchUpdateStatusDto } from './dto/batch-update-status.dto';
 import { BusinessesService } from '../businesses/businesses.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { BookingStatus, PaymentMethod } from '@prisma/client';
+import {
+  parseTehranDateTime,
+  getTehranParts,
+  getTehranWallDayRange,
+} from '../common/utils/tehran-time.util';
 
 // ──── UTC Date Helpers (جلوگیری از timezone drift ایران) ────
 const parseISOtoUTC = (iso: string): Date => {
@@ -105,7 +110,7 @@ export class BookingsService {
     }
 
     // 5. اعتبارسنجی تاریخ و زمان
-    const startTime = new Date(dto.startTime);
+    const startTime = parseTehranDateTime(dto.startTime);
     if (isNaN(startTime.getTime())) {
       throw new BadRequestException('تاریخ و ساعت نامعتبر است');
     }
@@ -119,9 +124,10 @@ export class BookingsService {
       startTime.getTime() + service.durationMinutes * 60 * 1000,
     );
 
-    // 6. چک کردن ساعات کاری برای آن روز (روز هفته و ساعت‌ها LOCAL)
-    const jsDayOfWeek = startTime.getDay();
-    const iranDayOfWeek = (jsDayOfWeek + 1) % 7;
+    // 6. چک کردن ساعات کاری برای آن روز (روز هفته و ساعت‌ها Tehran)
+    const startParts = getTehranParts(startTime);
+    const endParts = getTehranParts(endTime);
+    const iranDayOfWeek = startParts.dayOfWeek;
 
     const businessHour = await this.prisma.businessHour.findFirst({
       where: {
@@ -134,8 +140,8 @@ export class BookingsService {
       throw new BadRequestException('این کسب‌وکار در این روز تعطیل است');
     }
 
-    const slotStartMinutes = startTime.getHours() * 60 + startTime.getMinutes();
-    const slotEndMinutes = endTime.getHours() * 60 + endTime.getMinutes();
+    const slotStartMinutes = startParts.hour * 60 + startParts.minute;
+    const slotEndMinutes = endParts.hour * 60 + endParts.minute;
     const openMinutes = this.timeToMinutes(businessHour.openTime);
     const closeMinutes = this.timeToMinutes(businessHour.closeTime);
 
@@ -145,24 +151,9 @@ export class BookingsService {
       );
     }
 
-    // 7. چک کردن تعطیلات رسمی (پنجره = روز UTCِ تاریخ دیواری)
-    const wallStartOfDay = new Date(
-      Date.UTC(
-        startTime.getFullYear(),
-        startTime.getMonth(),
-        startTime.getDate(),
-        0, 0, 0, 0,
-      ),
-    );
-
-    const wallEndOfDay = new Date(
-      Date.UTC(
-        startTime.getFullYear(),
-        startTime.getMonth(),
-        startTime.getDate(),
-        23, 59, 59, 999,
-      ),
-    );
+    // 7. چک کردن تعطیلات رسمی (پنجره = روز دیواری Tehran)
+    const { start: wallStartOfDay, end: wallEndOfDay } =
+      getTehranWallDayRange(startTime);
 
     const holiday = await this.prisma.holiday.findFirst({
       where: {
@@ -309,10 +300,10 @@ export class BookingsService {
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const from = query?.from ? parseISOtoUTC(query.from) : defaultFrom;
-    const to = query?.to ? parseISOtoUTC(query.to) : now;
-
-    to.setHours(23, 59, 59, 999);
+    const from = query?.from ? parseTehranDateTime(query.from) : defaultFrom;
+    const to = query?.to
+      ? getTehranWallDayRange(parseTehranDateTime(query.to)).end
+      : now;
 
     const dayDiff = Math.ceil(
       (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24),
@@ -786,9 +777,10 @@ export class BookingsService {
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const from = query?.from ? parseISOtoUTC(query.from) : defaultFrom;
-    const to = query?.to ? parseISOtoUTC(query.to) : now;
-    to.setHours(23, 59, 59, 999);
+    const from = query?.from ? parseTehranDateTime(query.from) : defaultFrom;
+    const to = query?.to
+      ? getTehranWallDayRange(parseTehranDateTime(query.to)).end
+      : now;
 
     const dayDiff = Math.ceil(
       (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24),

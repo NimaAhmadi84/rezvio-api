@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { getTehranWallDayRange } from '../common/utils/tehran-time.util';
 
 @Injectable()
 export class StatsService {
@@ -121,12 +122,8 @@ export class StatsService {
 
     // ──── Step 2: محاسبه محدوده‌های زمانی ────
     const now = new Date();
-    const todayStart = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-    );
-    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const { start: todayStart, end: todayEnd } =
+      getTehranWallDayRange(now);
     const weekFromNow = new Date(todayStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     // ──── Step 3: همه رزروهای owner رو در یک query بگیر ────

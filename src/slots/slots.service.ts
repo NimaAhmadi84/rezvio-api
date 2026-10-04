@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { getTehranTodayISO } from '../common/utils/tehran-time.util';
 
 export interface SlotResult {
   startTime: string; // فرمت HH:MM
@@ -27,14 +28,7 @@ const toUTCISO = (d: Date): string => {
   return `${y}-${m}-${day}`;
 };
 
-// امروز در timezone محلی سرور به صورت YYYY-MM-DD
-const getLocalTodayISO = (): string => {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-};
+
 
 // ──── Helper: تبدیل "HH:MM" به دقیقه از نیمه‌شب ────
 const timeToMinutes = (time: string): number => {
@@ -215,7 +209,7 @@ export class SlotsService {
       );
 
       if (allSlotsWithoutBreakCheck.length === 0) {
-        const todayIso = getLocalTodayISO();
+        const todayIso = getTehranTodayISO();
         const isToday = dateString === todayIso;
         emptyReason = isToday ? 'PAST' : 'FULL';
       } else {
@@ -245,7 +239,7 @@ export class SlotsService {
     const openMinutes = timeToMinutes(openTime);
     const closeMinutes = timeToMinutes(closeTime);
 
-    const todayIso = getLocalTodayISO();
+    const todayIso = getTehranTodayISO();
     const isToday = targetDateIso === todayIso;
 
     // فاصله بین slot ها = duration خدمت (مدل Fresha/Booksy)
@@ -352,7 +346,7 @@ export class SlotsService {
       throw new BadRequestException('این کارمند این خدمت را ارائه نمی‌دهد');
     }
 
-    const todayIso = getLocalTodayISO();
+    const todayIso = getTehranTodayISO();
     const todayDate = parseISOtoUTC(todayIso);
 
     for (let offset = 0; offset < 60; offset++) {
