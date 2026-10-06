@@ -118,8 +118,15 @@ export class BusinessReviewsService {
         replies: { take: 1, orderBy: { createdAt: 'desc' } },
       },
       orderBy,
-      skip: sort === 'helpful' ? 0 : skip, // برای helpful همه را می‌گیریم
-      take: sort === 'helpful' ? 1000 : limit, // سقف ۱۰۰۰ برای sort در memory
+      // ⚠️ SCALE LIMIT (Phase 7): sort='helpful' fetches up to 1000 rows
+      // and sorts in memory because Prisma can't orderBy relation-count.
+      // This is fine for typical scale (~50 reviews/business).
+      // IF reviews-per-business ever approaches 500+, migrate to:
+      //   - raw SQL with GROUP BY + ORDER BY (likes - dislikes) DESC, or
+      //   - denormalized `helpfulScore Int @default(0)` column on BusinessReview,
+      //     updated in $transaction when a vote is cast.
+      skip: sort === 'helpful' ? 0 : skip,
+      take: sort === 'helpful' ? 1000 : limit,
     });
 
     // ──── Helpful sort در memory ────

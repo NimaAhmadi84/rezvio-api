@@ -791,21 +791,17 @@ export class BusinessesService {
       throw new NotFoundException('کسب‌وکار یافت نشد');
     }
 
-    // شمارش‌های موازی برای performance
-    const [
-      servicesCount,
-      staffCount,
-      reviewsCount,
-      reviewStats,
-    ] = await Promise.all([
+    // شمارش‌های موازی (reviews: count + avg در یک query ادغام شدن)
+    const [servicesCount, staffCount, reviewStats] = await Promise.all([
       this.prisma.service.count({ where: { businessId } }),
       this.prisma.staff.count({ where: { businessId } }),
-      this.prisma.businessReview.count({ where: { businessId } }),
       this.prisma.businessReview.aggregate({
         where: { businessId },
         _avg: { rating: true },
+        _count: { _all: true },
       }),
     ]);
+    const reviewsCount = reviewStats._count._all;
 
     this.logger.debug(`📊 Stats for ${businessId}: services=${servicesCount}, staff=${staffCount}, reviews=${reviewsCount}`);
 
