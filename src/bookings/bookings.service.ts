@@ -322,28 +322,12 @@ export class BookingsService {
       startTime: { gte: from, lte: to },
     };
 
-    const [
-      pendingCount,
-      confirmedCount,
-      completedCount,
-      cancelledCount,
-      noShowCount,
-      revenueResult,
-    ] = await Promise.all([
-      this.prisma.booking.count({
-        where: { ...statsWhere, status: BookingStatus.PENDING },
-      }),
-      this.prisma.booking.count({
-        where: { ...statsWhere, status: BookingStatus.CONFIRMED },
-      }),
-      this.prisma.booking.count({
-        where: { ...statsWhere, status: BookingStatus.COMPLETED },
-      }),
-      this.prisma.booking.count({
-        where: { ...statsWhere, status: BookingStatus.CANCELLED },
-      }),
-      this.prisma.booking.count({
-        where: { ...statsWhere, status: BookingStatus.NO_SHOW },
+    // Single groupBy instead of 5 separate counts (5 queries → 1).
+    const [statusGroups, revenueResult] = await Promise.all([
+      this.prisma.booking.groupBy({
+        by: ['status'],
+        where: statsWhere,
+        _count: { _all: true },
       }),
       this.prisma.$queryRaw<[{ total: number | null }]>`
         SELECT COALESCE(SUM(s.price), 0) as total
@@ -356,12 +340,16 @@ export class BookingsService {
       `,
     ]);
 
+    const statusCounts = new Map(
+      statusGroups.map((g) => [g.status, g._count._all]),
+    );
+
     const stats = {
-      pending: pendingCount,
-      confirmed: confirmedCount,
-      completed: completedCount,
-      cancelled: cancelledCount,
-      noShow: noShowCount,
+      pending: statusCounts.get(BookingStatus.PENDING) ?? 0,
+      confirmed: statusCounts.get(BookingStatus.CONFIRMED) ?? 0,
+      completed: statusCounts.get(BookingStatus.COMPLETED) ?? 0,
+      cancelled: statusCounts.get(BookingStatus.CANCELLED) ?? 0,
+      noShow: statusCounts.get(BookingStatus.NO_SHOW) ?? 0,
       totalRevenue: Number(revenueResult[0]?.total || 0),
     };
 
@@ -996,15 +984,16 @@ export class BookingsService {
 
     // Atomic transaction: update all bookings + adjust bookingsCount
     return this.prisma.$transaction(async (tx) => {
-      // Update all bookings
-      const updatedBookings = await Promise.all(
-        dto.bookingIds.map((id) =>
-          tx.booking.update({
-            where: { id },
-            data: { status: dto.status as BookingStatus },
-          }),
-        ),
-      );
+      // Update all bookings in a SINGLE query (batch efficiency: 1 vs N).
+      // We re-fetch afterwards to return the same shape the caller expects.
+      await tx.booking.updateMany({
+        where: { id: { in: dto.bookingIds } },
+        data: { status: dto.status as BookingStatus },
+      });
+
+      const updatedBookings = await tx.booking.findMany({
+        where: { id: { in: dto.bookingIds } },
+      });
 
       // Adjust bookingsCount for affected businesses
       if (totalBookingsCountDelta !== 0) {
