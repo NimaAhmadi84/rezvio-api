@@ -41,6 +41,14 @@ async function bootstrap() {
   // Production: whitelist specific domains
   const isProduction = process.env.NODE_ENV === 'production';
 
+  // ──── پشت reverse proxy (Render): IP واقعی کلاینت را از X-Forwarded-For بگیر ────
+  // بدون این، req.ip آی‌پی پروکسی است و throttler/سشن‌ها/کپچا همه کاربران را یکی می‌بینند.
+  // مقدار 1 = دقیقاً یک hop مورد اعتماد (Render). اگر جلوی Render یک CDN دیگر
+  // (مثل Cloudflare) گذاشتی باید عدد را متناسب زیاد کنی؛ هرگز true نگذار (قابل جعل می‌شود).
+  if (isProduction) {
+    app.set('trust proxy', 1);
+  }
+
   const allowedOrigins: boolean | string[] = isProduction
     ? [
         'https://rezvio.ir',
