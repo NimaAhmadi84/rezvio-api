@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as os from 'os';
 import { AppModule } from './app.module';
@@ -15,7 +15,6 @@ function getLocalNetworkIP(): string {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] || []) {
-      // IPv4 + non-internal (not 127.0.0.1) + active
       if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('127.')) {
         return iface.address;
       }
@@ -28,23 +27,25 @@ function getLocalNetworkIP(): string {
 // Bootstrap
 // ═══════════════════════════════════════════════════════════════
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
+
   // ──── Fail fast on insecure/missing security config ────
   validateSecurityConfig(process.env);
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // [SHUTDOWN] Enable graceful shutdown hooks
+  // Captures SIGTERM (Render/Docker) and SIGINT (Ctrl+C) signals.
+  // NestJS will call OnModuleDestroy on all providers before exiting,
+  // allowing in-flight transactions to complete.
+  app.enableShutdownHooks();
+
   // ──── Security headers ────
   app.use(helmet());
 
   // ──── CORS — Smart Origin Handling ────
-  // Dev mode: allow all origins (mobile, local, any network IP)
-  // Production: whitelist specific domains
   const isProduction = process.env.NODE_ENV === 'production';
 
-  // ──── پشت reverse proxy (Render): IP واقعی کلاینت را از X-Forwarded-For بگیر ────
-  // بدون این، req.ip آی‌پی پروکسی است و throttler/سشن‌ها/کپچا همه کاربران را یکی می‌بینند.
-  // مقدار 1 = دقیقاً یک hop مورد اعتماد (Render). اگر جلوی Render یک CDN دیگر
-  // (مثل Cloudflare) گذاشتی باید عدد را متناسب زیاد کنی؛ هرگز true نگذار (قابل جعل می‌شود).
   if (isProduction) {
     app.set('trust proxy', 1);
   }
@@ -54,16 +55,23 @@ async function bootstrap() {
         'https://rezvio.ir',
         'https://www.rezvio.ir',
         'https://app.rezvio.ir',
-        // Add Vercel preview URLs here if needed
       ]
-    : true; // true = allow ALL origins in dev (mobile testing works automatically)
+    : true;
 
   app.enableCors({
     origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Current-Session-Id'],
-    maxAge: 86400, // 24h preflight cache
+    // [CORS-FIX] Added 'Idempotency-Key' to allowed headers
+    // Without this, browser blocks cross-origin POST requests with idempotency key
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'X-Current-Session-Id',
+      'Idempotency-Key',
+    ],
+    maxAge: 86400,
   });
 
   // ──── Global ValidationPipe ────
@@ -75,7 +83,7 @@ async function bootstrap() {
     }),
   );
 
-  // ──── Global Exception Filter (شکل واحد خطا) ────
+  // ──── Global Exception Filter ────
   app.useGlobalFilters(new HttpExceptionFilter());
 
   // ──── Swagger (API docs) — non-production only ────
@@ -96,12 +104,21 @@ async function bootstrap() {
   const port = process.env.PORT || 3001;
   await app.listen(port, '0.0.0.0');
 
-  // ──── Console Logs (Dynamic IP — no hardcoding!) ────
+  // [SHUTDOWN] Log graceful shutdown events for debugging
+  process.on('SIGTERM', () => {
+    logger.warn('⚠️ SIGTERM received — starting graceful shutdown...');
+  });
+  process.on('SIGINT', () => {
+    logger.warn('⚠️ SIGINT received — starting graceful shutdown...');
+  });
+
+  // ──── Console Logs ────
   const localIP = getLocalNetworkIP();
   console.log(`🚀 Rezvio API running on http://localhost:${port}`);
   console.log(`🚀 Network URL: http://${localIP}:${port}`);
   console.log(`📚 Swagger docs: http://localhost:${port}/api/docs`);
   console.log(`🌍 Environment: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
+  console.log(`🛡️ Graceful Shutdown: ENABLED`);
   if (!isProduction) {
     console.log(`📱 Mobile test URL: http://${localIP}:${port}`);
     console.log(`💡 CORS: permissive (all origins allowed in dev mode)`);

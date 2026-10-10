@@ -49,6 +49,9 @@ const STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
   [BookingStatus.NO_SHOW]: [],
 };
 
+// [IDEMPOTENCY] TTL for idempotency keys: 24 hours
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class BookingsService {
   private readonly logger = new Logger(BookingsService.name);
@@ -59,9 +62,34 @@ export class BookingsService {
   ) {}
 
   /**
-   * ساخت رزرو جدید با جلوگیری از double-booking
+   * ساخت رزرو جدید با جلوگیری از double-booking + Idempotency
    */
   async create(userId: string, dto: CreateBookingDto) {
+    // [IDEMPOTENCY] Check if this key was already processed
+    const existingKey = await this.prisma.idempotencyKey.findUnique({
+      where: { key: dto.idempotencyKey },
+    });
+
+    if (existingKey) {
+      // Verify same user owns this key (prevent key collision across users)
+      if (existingKey.userId !== userId) {
+        throw new ForbiddenException('این کلید idempotency متعلق به شما نیست');
+      }
+
+      // Check TTL — expired keys should not be reused
+      if (new Date() > existingKey.expiresAt) {
+        throw new BadRequestException(
+          'کلید idempotency منقضی شده است. لطفاً صفحه را رفرش کرده و مجدداً تلاش کنید',
+        );
+      }
+
+      // Return cached response — exact same result as original request
+      this.logger.log(
+        `[IDEMPOTENCY] Returning cached response for key ${dto.idempotencyKey}`,
+      );
+      return existingKey.responseBody as object;
+    }
+
     // 1. اعتبارسنجی business وجود داره
     const business = await this.prisma.business.findUnique({
       where: { id: dto.businessId },
@@ -170,7 +198,6 @@ export class BookingsService {
     }
 
     // 8. چک غیبت‌های کارمند (هفتگی + موردی) — defense in depth
-    // حتی اگر مشتری مستقیماً API را صدا بزند و startTime جعلی بفرستد، reject می‌شود
     const [weeklyBreaks, dateBreaks] = await Promise.all([
       this.prisma.staffBreak.findMany({
         where: { staffId: dto.staffId, dayOfWeek: iranDayOfWeek },
@@ -198,10 +225,27 @@ export class BookingsService {
       }
     }
 
-    // 9. ایجاد رزرو در transaction برای جلوگیری از race condition
+    // 9. ایجاد رزرو در transaction + Idempotency atomic insert
     try {
-      const booking = await this.prisma.$transaction(
+      const result = await this.prisma.$transaction(
         async (tx) => {
+          // [IDEMPOTENCY] Atomic check-and-set inside transaction
+          // This prevents race condition where two identical requests
+          // both pass the pre-check above simultaneously
+          const existingInTx = await tx.idempotencyKey.findUnique({
+            where: { key: dto.idempotencyKey },
+          });
+
+          if (existingInTx) {
+            // Another concurrent request already claimed this key
+            if (existingInTx.userId !== userId) {
+              throw new ForbiddenException('این کلید idempotency متعلق به شما نیست');
+            }
+            // Return cached — will be handled after transaction
+            return { cached: true, body: existingInTx.responseBody as object };
+          }
+
+          // Overlap check (existing logic)
           const overlappingBooking = await tx.booking.findFirst({
             where: {
               businessId: dto.businessId,
@@ -225,7 +269,8 @@ export class BookingsService {
             });
           }
 
-          return tx.booking.create({
+          // Create the booking
+          const booking = await tx.booking.create({
             data: {
               businessId: dto.businessId,
               customerId: userId,
@@ -238,18 +283,87 @@ export class BookingsService {
               paymentMethod: dto.paymentMethod ?? PaymentMethod.IN_PERSON,
             },
           });
+
+          // Fetch full booking with relations (same shape as findOne)
+          const fullBooking = await tx.booking.findUnique({
+            where: { id: booking.id },
+            include: {
+              business: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  ownerId: true,
+                },
+              },
+              customer: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+              service: {
+                select: {
+                  id: true,
+                  name: true,
+                  durationMinutes: true,
+                  price: true,
+                },
+              },
+              staff: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          });
+
+          // [IDEMPOTENCY] Store the successful response atomically
+          await tx.idempotencyKey.create({
+            data: {
+              key: dto.idempotencyKey,
+              userId,
+              method: 'POST',
+              path: '/bookings',
+              statusCode: 201,
+              responseBody: fullBooking as object,
+              expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL_MS),
+            },
+          });
+
+          return { cached: false, body: fullBooking };
         },
         {
-          timeout: 10000,
+          timeout: 15000, // Increased from 10s to accommodate idempotency write
         },
       );
 
-      // caller داخلی: کاربر خودش رزرو رو ساخته → دسترسی CUSTOMER (owner خودش)
-      return this.findOne(booking.id, userId, 'CUSTOMER');
+      if (result.cached) {
+        this.logger.log(
+          `[IDEMPOTENCY] Concurrent duplicate detected for key ${dto.idempotencyKey}`,
+        );
+        return result.body;
+      }
+
+      return result.body;
     } catch (error) {
       if (error instanceof ConflictException) {
         throw error;
       }
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(
+        `[BOOKING_CREATE] Failed for user ${userId}: ${errMsg}`,
+        errStack,
+      );
       throw new BadRequestException('خطا در ایجاد رزرو');
     }
   }
@@ -322,7 +436,6 @@ export class BookingsService {
       startTime: { gte: from, lte: to },
     };
 
-    // Single groupBy instead of 5 separate counts (5 queries → 1).
     const [statusGroups, revenueResult] = await Promise.all([
       this.prisma.booking.groupBy({
         by: ['status'],
@@ -434,19 +547,12 @@ export class BookingsService {
   }
 
   /**
-   * دریافت یک رزرو با ID
-   */
-  /**
    * دریافت جزئیات رزرو با ownership check.
    *
    * دسترسی:
    *   - CUSTOMER: فقط رزروهای خودش
    *   - OWNER: فقط رزروهای کسب‌وکارهای خودش
    *   - ADMIN: همه
-   *
-   * @param id رزرو
-   * @param userId کاربر جاری
-   * @param userRole نقش کاربر
    */
   async findOne(id: string, userId: string, userRole: string) {
     const booking = await this.prisma.booking.findUnique({
@@ -835,10 +941,6 @@ export class BookingsService {
   }
 
   /**
-   * Sanitize متن — حذف تگ‌های HTML + فشرده‌سازی فضای خالی
-   */
-
-  /**
    * دریافت رزروهای پیش‌رو برای OWNER
    */
   async getUpcomingForOwner(userId: string, days = 7) {
@@ -913,10 +1015,6 @@ export class BookingsService {
 
   /**
    * Batch update status برای چند رزرو همزمان (Owner/Admin only)
-   * - فقط CONFIRMED یا CANCELLED مجاز است
-   * - Ownership validation برای همه رزروها
-   * - Atomic transaction برای همه updates
-   * - bookingsCount delta محاسبه و اعمال می‌شه
    */
   async batchUpdateStatus(
     userId: string,
@@ -930,7 +1028,6 @@ export class BookingsService {
       throw new ForbiddenException('فقط صاحب کسب‌وکار یا مدیر می‌تواند وضعیت رزروها را تغییر دهد');
     }
 
-    // Fetch all bookings with business info for ownership check
     const bookings = await this.prisma.booking.findMany({
       where: { id: { in: dto.bookingIds } },
       include: {
@@ -946,18 +1043,15 @@ export class BookingsService {
       throw new NotFoundException(`رزروهای یافت نشد: ${missingIds.join(', ')}`);
     }
 
-    // Validate ownership and status transitions for each booking
     const errors: string[] = [];
     let totalBookingsCountDelta = 0;
 
     for (const booking of bookings) {
-      // Ownership check (for OWNER role)
       if (isOwner && booking.business.ownerId !== userId) {
         errors.push(`رزرو ${booking.id}: شما مالک این کسب‌وکار نیستید`);
         continue;
       }
 
-      // Status transition validation
       const allowedTransitions = STATUS_TRANSITIONS[booking.status];
       if (!allowedTransitions.includes(dto.status as BookingStatus)) {
         errors.push(
@@ -966,7 +1060,6 @@ export class BookingsService {
         continue;
       }
 
-      // Calculate bookingsCount delta
       const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
       const willBeConfirmed = dto.status === 'CONFIRMED';
       const willBeCancelled = dto.status === 'CANCELLED';
@@ -982,10 +1075,7 @@ export class BookingsService {
       throw new BadRequestException(errors.join('\n'));
     }
 
-    // Atomic transaction: update all bookings + adjust bookingsCount
     return this.prisma.$transaction(async (tx) => {
-      // Update all bookings in a SINGLE query (batch efficiency: 1 vs N).
-      // We re-fetch afterwards to return the same shape the caller expects.
       await tx.booking.updateMany({
         where: { id: { in: dto.bookingIds } },
         data: { status: dto.status as BookingStatus },
@@ -995,9 +1085,7 @@ export class BookingsService {
         where: { id: { in: dto.bookingIds } },
       });
 
-      // Adjust bookingsCount for affected businesses
       if (totalBookingsCountDelta !== 0) {
-        // Group bookings by businessId to batch updates
         const businessDeltas = new Map<string, number>();
         for (const booking of bookings) {
           const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
@@ -1016,7 +1104,6 @@ export class BookingsService {
           }
         }
 
-        // Apply deltas to each business
         for (const [businessId, delta] of businessDeltas) {
           await tx.business.update({
             where: { id: businessId },

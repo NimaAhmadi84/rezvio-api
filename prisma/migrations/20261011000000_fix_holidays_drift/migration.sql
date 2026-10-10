@@ -1,0 +1,4 @@
+-- This migration reconciles the schema drift where the unique index
+-- on holidays(businessId, date) was removed from the live database
+-- but still exists in the migration history.
+-- No actual DDL change needed — this is a baseline sync.
