@@ -33,7 +33,6 @@ import { ConfigService } from '@nestjs/config';
 import { HcaptchaService } from '../common/services/hcaptcha.service';
 import { SessionService } from './session.service';
 import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { CheckIdentifierDto } from './dto/check-identifier.dto';
 import { LoginPasswordDto } from './dto/login-password.dto';
@@ -41,7 +40,6 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { PendingDeviceSessionsDto, CompleteDeviceLimitLoginDto } from './dto/device-limit.dto';
-import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
@@ -64,7 +62,7 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'ثبت‌نام کاربر جدید' })
   @ApiResponse({
     status: 201,
@@ -83,27 +81,10 @@ export class AuthController {
     return this.authService.register(dto, userAgent, ip);
   }
 
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
-  @UseGuards(LocalAuthGuard)
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
-  @ApiOperation({ summary: 'ورود کاربر' })
-  @ApiResponse({
-    status: 200,
-    description: 'ورود موفق',
-    type: AuthResponseDto,
-  })
-  @ApiResponse({ status: 401, description: 'ایمیل یا رمز اشتباه' })
-  async login(
-    @Body() _dto: LoginDto,
-    @Request() req: any,
-  ): Promise<AuthResponseDto> {
-    return this.authService.login(req.user);
-  }
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'دریافت Access Token جدید با Refresh Token' })
   @ApiResponse({ status: 200, description: 'Access Token جدید' })
   @ApiResponse({ status: 401, description: 'Refresh Token نامعتبر' })
@@ -128,7 +109,7 @@ export class AuthController {
 
   @Post('check-identifier')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'بررسی وجود کاربر با شناسه' })
   @ApiResponse({ status: 200, description: 'نتیجه بررسی' })
   async checkIdentifier(@Body() dto: CheckIdentifierDto) {
@@ -147,7 +128,7 @@ export class AuthController {
 
   @Post('login-password')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'ورود با رمز عبور' })
   @ApiResponse({ status: 200, description: 'ورود موفق', type: AuthResponseDto })
   @ApiResponse({ status: 401, description: 'شناسه یا رمز اشتباه' })
@@ -174,7 +155,7 @@ export class AuthController {
 
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ otp: { limit: 10, ttl: 60000 } })
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: 'درخواست بازیابی رمز عبور (ارسال OTP)' })
   @ApiResponse({ status: 200, description: 'درخواست ثبت شد (پیام یکسان برای جلوگیری از Account Enumeration)' })
   async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: any): Promise<{ message: string }> {
@@ -192,7 +173,7 @@ export class AuthController {
 
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'تأیید OTP و تغییر رمز عبور' })
   @ApiResponse({ status: 200, description: 'رمز عبور با موفقیت تغییر کرد' })
   @ApiResponse({ status: 400, description: 'کد نامعتبر یا منقضی شده' })
@@ -249,7 +230,7 @@ export class AuthController {
 
   @Post('sessions/pending')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'لیست دستگاه‌های فعال در جریان سقف دستگاه (با pendingToken)' })
   @ApiResponse({ status: 200, description: 'لیست دستگاه‌های فعال' })
   @ApiResponse({ status: 401, description: 'pendingToken نامعتبر یا منقضی' })
@@ -260,7 +241,7 @@ export class AuthController {
 
   @Post('sessions/complete')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'تکمیل لاگین پس از خروج از یکی از دستگاه‌ها (بدون تکرار رمز)' })
   @ApiResponse({ status: 200, description: 'لاگین تکمیل شد', type: AuthResponseDto })
   @ApiResponse({ status: 409, description: 'سقف دوباره پر شده (race) — pendingToken جدید در پاسخ' })
@@ -277,7 +258,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @Throttle({ auth: { limit: 20, ttl: 60000 } })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @ApiOperation({ summary: 'خروج از حساب — غیرفعال‌سازی سشن فعلی سمت سرور' })
   @ApiResponse({ status: 200, description: 'خروج موفق' })
   async logout(@CurrentUser() user: any, @Req() req: any) {
