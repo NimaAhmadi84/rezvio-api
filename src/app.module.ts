@@ -46,6 +46,9 @@ import { validateEnv } from './config/env.validation';
           limit: 100,
         },
       ],
+      // [LOAD TEST] Bypass throttler when DISABLE_THROTTLER=true (dev/test only).
+      // NEVER set this env var in production — see AI_HANDOFF §0.21.
+      skipIf: () => process.env.DISABLE_THROTTLER === 'true',
     }),
     ConfigModule.forRoot({
       isGlobal: true,
