@@ -1,2 +1,2 @@
--- AddUniqueConstraint: یک تاریخ خاص در یک کسب‌وکار نباید دو بار تعطیل ثبت شود
-CREATE UNIQUE INDEX "holidays_businessId_date_key" ON "holidays"("businessId", "date");
+-- This unique index was removed from the live database after initial application.
+-- Migration kept as baseline marker only. No DDL action needed.
