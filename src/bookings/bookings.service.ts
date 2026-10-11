@@ -358,6 +358,60 @@ export class BookingsService {
       if (error instanceof BadRequestException) {
         throw error;
       }
+
+      // [IDEMPOTENCY] Race condition resolution.
+      //
+      // Two parallel requests with the SAME idempotencyKey can both pass
+      // the pre-check + in-tx findUnique under Read Committed isolation.
+      // The DB then blocks the second one — but which constraint fires
+      // first depends on ordering:
+      //   - If the winner's idempotencyKey.create commits first → P2002/23505
+      //     on idempotency_keys.key
+      //   - If the winner's booking.create commits first → 23P01 on
+      //     bookings_staff_no_overlap (exclusion constraint). This fires
+      //     BEFORE we ever reach idempotencyKey.create, so the tx rolls
+      //     back and we must refetch the winner's cached response here.
+      //
+      // In both cases, on refetch we find the winner's idempotencyKey row
+      // (it's guaranteed committed by the time we see these errors) and
+      // return its responseBody — giving the loser the exact same 201.
+      const errObj = error as {
+        code?: string;
+        meta?: { target?: unknown; constraint?: string };
+        message?: string;
+      };
+      const errCode = errObj?.code;
+      const errMsgFull = errObj?.message ?? '';
+      const isRaceCandidate =
+        errCode === 'P2002' ||
+        errCode === '23505' ||
+        errCode === '23P01' ||
+        errMsgFull.includes('idempotency_keys') ||
+        errMsgFull.includes('bookings_staff_no_overlap');
+
+      if (isRaceCandidate) {
+        const cached = await this.prisma.idempotencyKey.findUnique({
+          where: { key: dto.idempotencyKey },
+        });
+        if (cached && cached.userId === userId) {
+          this.logger.log(
+            `[IDEMPOTENCY] Race resolved (${errCode ?? 'msg-match'}) — returning cached response for key ${dto.idempotencyKey}`,
+          );
+          return cached.responseBody as object;
+        }
+        // No cached row with this key+user → this is a genuine slot overlap
+        // (a different intent took the slot). Surface a proper 409.
+        if (
+          errCode === '23P01' ||
+          errMsgFull.includes('bookings_staff_no_overlap')
+        ) {
+          throw new ConflictException({
+            message:
+              'این زمان قبلاً رزرو شده است. لطفاً زمان دیگری را انتخاب کنید',
+            code: 'BOOKING_OVERLAP',
+          });
+        }
+      }
       const errMsg = error instanceof Error ? error.message : String(error);
       const errStack = error instanceof Error ? error.stack : undefined;
       this.logger.error(
