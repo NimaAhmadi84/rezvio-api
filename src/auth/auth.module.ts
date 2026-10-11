@@ -7,11 +7,9 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { UsersModule } from '../users/users.module';
 import { OtpModule } from '../otp/otp.module';
-import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { LocalAuthGuard } from './guards/local-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { HcaptchaService } from '../common/services/hcaptcha.service';
 import { SessionService } from './session.service';
@@ -38,12 +36,10 @@ const ACCESS_TOKEN_EXPIRES = 900; // 15 minutes (seconds)
   providers: [
     SessionService,
     AuthService,
-    LocalStrategy,
     JwtStrategy,
     GoogleStrategy,
     HcaptchaService,
     JwtAuthGuard,
-    LocalAuthGuard,
     RolesGuard,
   ],
   exports: [AuthService, SessionService, JwtAuthGuard, RolesGuard],

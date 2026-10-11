@@ -208,7 +208,8 @@ model Holiday {
   reason     String?
   createdAt  DateTime @default(now())
 
-  @@unique([businessId, date])
+  // Unique constraint removed — see AI_HANDOFF.txt §11 Gotcha #217
+  // Duplicate prevention handled at application layer
   @@map("holidays")
 }
 
@@ -394,4 +395,22 @@ model UserSession {
   @@index([lastActiveAt])
   @@index([expiresAt])
   @@map("user_sessions")
+}
+// ═══════════════════════════════════════════════════════════════
+// IDEMPOTENCY KEYS — جلوگیری از رزرو تکراری (Double-Submit)
+// ═══════════════════════════════════════════════════════════════
+model IdempotencyKey {
+  id          String   @id @default(uuid())
+  key         String   @unique // کلید یکتای ارسالی از کلاینت
+  userId      String   // کاربری که درخواست را ارسال کرده
+  method      String   // HTTP method (POST, PATCH, etc.)
+  path        String   // مسیر اندپوینت
+  statusCode  Int      // کد وضعیت پاسخ ذخیره‌شده
+  responseBody Json    // بدنه پاسخ ذخیره‌شده (برای بازگرداندن همان نتیجه)
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime // زمان انقضا (TTL)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
 }

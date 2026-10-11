@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsUUID, IsDateString, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsUUID, IsDateString, IsEnum, Matches } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentMethod } from '@prisma/client';
 
@@ -33,4 +33,20 @@ export class CreateBookingDto {
   @IsEnum(PaymentMethod, { message: 'روش پرداخت نامعتبر است (IN_PERSON یا ONLINE)' })
   @IsOptional()
   paymentMethod?: PaymentMethod;
+
+  /**
+   * کلید Idempotency — جلوگیری از رزرو تکراری در اثر double-click یا network retry.
+   * فرانت‌اند باید یک UUID یکتا per-intent تولید کند و با هر submit ارسال نماید.
+   * فرمت: UUID v4 استاندارد
+   */
+  @ApiProperty({
+    description: 'کلید یکتای درخواست (Idempotency Key) — UUID v4',
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+  })
+  @IsString({ message: 'idempotencyKey باید رشته باشد' })
+  @Matches(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    { message: 'idempotencyKey باید فرمت UUID v4 معتبر داشته باشد' },
+  )
+  idempotencyKey!: string;
 }

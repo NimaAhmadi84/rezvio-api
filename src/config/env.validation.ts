@@ -44,6 +44,18 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
     }
   }
 
+  // ──── فقط در production: کپچا نباید بی‌صدا غیرفعال بماند ────
+  // HcaptchaService وقتی HCAPTCHA_SECRET_KEY خالی باشد تأیید را رد می‌کند (برای dev).
+  // در production نبود کلید یعنی ثبت‌نام و بازیابی رمز بدون هیچ حفاظی باز می‌مانند.
+  if (config['NODE_ENV'] === 'production') {
+    for (const key of ['HCAPTCHA_SECRET_KEY', 'HCAPTCHA_SITE_KEY']) {
+      const value = config[key];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        errors.push(`${key} is required in production (CAPTCHA must not be skipped)`);
+      }
+    }
+  }
+
   if (errors.length > 0) {
     throw new Error(
       `❌ Environment validation failed:\n  - ${errors.join('\n  - ')}\n` +
