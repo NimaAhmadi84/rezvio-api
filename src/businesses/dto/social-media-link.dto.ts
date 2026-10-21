@@ -4,11 +4,11 @@ import { ApiProperty } from '@nestjs/swagger';
 export class SocialMediaLinkDto {
   @ApiProperty({
     example: 'instagram',
-    description: 'پلتفرم (instagram, telegram, whatsapp, bale, eitaa, rubika, x, website)',
+    description: 'پلتفرم (instagram, telegram, whatsapp, bale, eitaa, rubika, soroush, aparat, youtube, x, linkedin, website)',
   })
   @IsString()
-  @Matches(/^(instagram|telegram|whatsapp|bale|eitaa|rubika|x|website)$/, {
-    message: 'پلتفرم نامعتبر است. مجازها: instagram, telegram, whatsapp, bale, eitaa, rubika, x, website',
+  @Matches(/^(instagram|telegram|whatsapp|bale|eitaa|rubika|soroush|aparat|youtube|x|linkedin|website)$/, {
+    message: 'پلتفرم نامعتبر است. مجازها: instagram, telegram, whatsapp, bale, eitaa, rubika, soroush, aparat, youtube, x, linkedin, website',
   })
   platform!: string;
 
