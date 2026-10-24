@@ -561,11 +561,17 @@ export class BusinessesService {
     const where: any = {};
 
     if (dto.q) {
-      where.name = { contains: dto.q, mode: 'insensitive' };
+      // جستجو در نام کسب‌وکار، توضیحات، و نام دسته‌بندی
+      where.OR = [
+        { name: { contains: dto.q, mode: 'insensitive' } },
+        { description: { contains: dto.q, mode: 'insensitive' } },
+        { category: { name: { contains: dto.q, mode: 'insensitive' } } },
+      ];
     }
 
     if (dto.city) {
-      where.address = { contains: dto.city, mode: 'insensitive' };
+      // استفاده از فیلد city به جای address برای دقت بیشتر
+      where.city = { contains: dto.city, mode: 'insensitive' };
     }
 
     if (dto.categoryId) {
