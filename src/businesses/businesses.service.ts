@@ -9,6 +9,7 @@ import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
 import { SearchBusinessesDto } from './dto/search-businesses.dto';
 import { sanitizeText } from '../common/utils/sanitize.util';
+import { normalizeText } from '@persian-tools/persian-tools';
 
 
 @Injectable()
@@ -553,90 +554,148 @@ export class BusinessesService {
   /**
    * جستجو و فیلتر کسب‌وکارها با pagination
    */
-  async search(dto: SearchBusinessesDto) {
-    const page = dto.page ?? 1;
-    const limit = dto.limit ?? 12;
-    const skip = (page - 1) * limit;
+   async search(dto: SearchBusinessesDto) {
+  const page = dto.page ?? 1;
+  const limit = dto.limit ?? 12;
+  const skip = (page - 1) * limit;
 
-    const where: any = {};
+  // ۱. نرمال‌سازی عبارت جستجو با استفاده از persian-tools
+  const normalizedQ = dto.q ? normalizeText(dto.q.trim()) : null;
 
-    if (dto.q) {
-      // جستجو در نام کسب‌وکار، توضیحات، و نام دسته‌بندی
-      where.OR = [
-        { name: { contains: dto.q, mode: 'insensitive' } },
-        { description: { contains: dto.q, mode: 'insensitive' } },
-        { category: { name: { contains: dto.q, mode: 'insensitive' } } },
-      ];
-    }
+  let searchTerms: string[] = [];
+  if (normalizedQ) {
+    // ۲. تقسیم عبارت جستجو به کلمات جداگانه (پشتیبانی از جستجوی چندکلمه‌ای)
+    const queryWords = normalizedQ.split(/\s+/).filter(w => w.length > 1);
+    searchTerms = [...queryWords];
 
-    if (dto.city) {
-      // استفاده از فیلد city به جای address برای دقت بیشتر
-      where.city = { contains: dto.city, mode: 'insensitive' };
-    }
-
-    if (dto.categoryId) {
-      where.categoryId = dto.categoryId;
-    }
-
-    if (dto.since) {
-      where.createdAt = { gte: new Date(dto.since) };
-    }
-
-    let orderBy: any = { createdAt: 'desc' };
-    switch (dto.sort) {
-      case 'newest':
-        orderBy = { createdAt: 'desc' };
-        break;
-      case 'popular':
-        orderBy = { bookingsCount: 'desc' };
-        break;
-      case 'most-viewed':
-        orderBy = { viewsCount: 'desc' };
-        break;
-      case 'name-asc':
-        orderBy = { name: 'asc' };
-        break;
-      case 'name-desc':
-        orderBy = { name: 'desc' };
-        break;
-    }
-
-    const [items, total] = await this.prisma.$transaction(
-      async (tx) => {
-        const itemsResult = await tx.business.findMany({
-          where,
-          orderBy,
-          skip,
-          take: limit,
-          include: {
-            category: true,
-            _count: { select: { services: true, staff: true, bookings: true } },
-          },
-        });
-        const totalResult = await tx.business.count({ where });
-        return [itemsResult, totalResult];
-      },
-      {
-        maxWait: 5000,
-        timeout: 15000,
-      },
-    );
-
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      items,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
-      },
+    // ۳. گسترش مترادف‌ها برای هر کلمه (لیست کامل‌تر)
+    const synonyms: Record<string, string[]> = {
+      'پیرایشگاه': ['آرایشگاه'],
+      'آرایشگاه': ['پیرایشگاه', 'سالن'],
+      'سالن': ['آرایشگاه'],
+      'دکتر': ['پزشک', 'کلینیک'],
+      'پزشک': ['دکتر', 'کلینیک'],
+      'دندانپزشک': ['دندانپزشکی'],
+      'مکانیکی': ['تعمیرگاه', 'خودرو'],
+      'تعمیرگاه': ['مکانیکی', 'تعمیرات'],
+      'کافه': ['قهوه', 'کافی'],
+      'رستوران': ['غذا', 'فست‌فود'],
+      'ورزش': ['باشگاه', 'تناسب اندام'],
+      'باشگاه': ['ورزش', 'تناسب اندام'],
+      'آموزشگاه': ['کلاس', 'تدریس'],
+      'مشاور': ['مشاوره'],
+      'وکیل': ['حقوقی', 'وکالت'],
     };
+
+    for (const word of queryWords) {
+      for (const [key, values] of Object.entries(synonyms)) {
+        if (word.includes(key)) {
+          searchTerms.push(...values);
+        }
+      }
+    }
+    // حذف کلمات تکراری
+    searchTerms = [...new Set(searchTerms)];
   }
 
+  const where: any = {};
+
+  // ۴. ساخت شرط‌های جستجو (فقط اگر کلمه‌ای برای جستجو وجود داشته باشد)
+  if (searchTerms.length > 0) {
+    where.OR = [];
+    for (const term of searchTerms) {
+      where.OR.push({ name: { contains: term, mode: 'insensitive' } });
+      where.OR.push({ description: { contains: term, mode: 'insensitive' } });
+      where.OR.push({ category: { name: { contains: term, mode: 'insensitive' } } });
+    }
+  }
+
+  // ۵. اعمال فیلتر شهر (با نرمال‌سازی)
+  if (dto.city) {
+    where.city = { contains: normalizeText(dto.city.trim()), mode: 'insensitive' };
+  }
+
+  if (dto.categoryId) {
+    where.categoryId = dto.categoryId;
+  }
+
+  if (dto.since) {
+    where.createdAt = { gte: new Date(dto.since) };
+  }
+
+  // ۶. تنظیم ترتیب (Sort)
+  let orderBy: any = { createdAt: 'desc' };
+  switch (dto.sort) {
+    case 'newest': orderBy = { createdAt: 'desc' }; break;
+    case 'popular': orderBy = { bookingsCount: 'desc' }; break;
+    case 'most-viewed': orderBy = { viewsCount: 'desc' }; break;
+    case 'name-asc': orderBy = { name: 'asc' }; break;
+    case 'name-desc': orderBy = { name: 'desc' }; break;
+  }
+
+  // ۷. اجرای جستجوی فازی (Fuzzy Search) در صورت وجود عبارت جستجو
+  if (normalizedQ) {
+    try {
+      // آستانه شباهت رو از 0.3 به 0.45 افزایش می‌دیم تا نتایج مرتبط‌تر باشن
+      // و از نویز جلوگیری بشه. برای نام‌های کوتاه فارسی، آستانه 0.3 نتایج پرت زیادی میده.
+      const fuzzyResults: any[] = await this.prisma.$queryRawUnsafe(`
+        SELECT b.id 
+        FROM "businesses" b
+        LEFT JOIN "categories" c ON b."categoryId" = c.id
+        WHERE 
+          unaccent(lower(b.name)) % unaccent(lower($1))
+          OR similarity(unaccent(lower(b.name)), unaccent(lower($1))) > 0.45
+          OR unaccent(lower(b.description)) % unaccent(lower($1))
+          OR EXISTS (
+            SELECT 1 FROM "categories" cat 
+            WHERE cat.id = b."categoryId" 
+            AND unaccent(lower(cat.name)) % unaccent(lower($1))
+          )
+      `, normalizedQ);
+
+      if (fuzzyResults.length > 0) {
+        const fuzzyIds = fuzzyResults.map((r) => r.id);
+        where.OR = where.OR || [];
+        where.OR.push({ id: { in: fuzzyIds } });
+      }
+    } catch (error) {
+      this.logger.warn('Fuzzy search failed, falling back to normal contains', error);
+    }
+  }
+
+  // ۸. دریافت نتایج نهایی از دیتابیس
+  const [items, total] = await this.prisma.$transaction(
+    async (tx) => {
+      const itemsResult = await tx.business.findMany({
+        where,
+        orderBy,
+        skip,
+        take: limit,
+        include: {
+          category: true,
+          _count: { select: { services: true, staff: true, bookings: true } },
+        },
+      });
+      const totalResult = await tx.business.count({ where });
+      return [itemsResult, totalResult];
+    },
+    { maxWait: 5000, timeout: 15000 },
+  );
+
+  const totalPages = Math.ceil(total / limit);
+
+  return {
+    items,
+    meta: {
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    },
+  };
+}
   /**
    * محاسبه درصد تکمیل پروفایل کسب‌وکار (Single Source of Truth)
    *
