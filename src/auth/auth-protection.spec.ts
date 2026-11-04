@@ -102,6 +102,7 @@ describe('Auth protection (Phase A)', () => {
       .spyOn(authService, 'findForIdentifierCheck')
       .mockResolvedValue({
         id: 'u1',
+        isBanned: false,
         email: 'user@example.com',
         phone: null,
         name: null,

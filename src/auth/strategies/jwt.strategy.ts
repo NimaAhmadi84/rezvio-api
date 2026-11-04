@@ -32,6 +32,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('کاربر یافت نشد');
     }
 
+    // ──── Phase 24: Banned check — همه‌ی request ها رد می‌شن ────
+    if (user.isBanned) {
+      throw new UnauthorizedException('حساب کاربری شما مسدود شده است');
+    }
+
     const dto = new AuthUserDto();
     dto.id = user.id;
     dto.email = user.email;

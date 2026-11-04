@@ -37,6 +37,7 @@ const SAFE_USER_SELECT = {
   phone: true,
   nationalId: true,
   role: true,
+  isBanned: true,
   createdAt: true,
   updatedAt: true,
 } as const;

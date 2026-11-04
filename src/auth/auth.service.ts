@@ -153,6 +153,12 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
     }
+    if (user.isBanned) {
+      this.logger.warn(`Banned user attempted login (password): ${identifier}`);
+      throw new UnauthorizedException(
+        'حساب کاربری شما مسدود شده است. برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.',
+      );
+    }
     return this.generateTokens(this.toAuthUserDto(user), rememberMe, userAgent, ip, currentSessionId);
   }
 
@@ -197,6 +203,14 @@ export class AuthService {
       user = await this.usersService.createMinimal(data);
       isNew = true;
       this.logger.log(`🆕 کاربر جدید ثبت‌نام شد: ${identifier} | Phone: ${phone || 'N/A'}`);
+    }
+
+    // ──── Phase 24: Banned check (before issuing tokens) ────
+    if (user.isBanned) {
+      this.logger.warn(`Banned user attempted login (OTP): ${identifier}`);
+      throw new UnauthorizedException(
+        'حساب کاربری شما مسدود شده است. برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.',
+      );
     }
 
     const response = await this.generateTokens(
@@ -408,6 +422,14 @@ export class AuthService {
       // کاربر وجود ندارد — فقط login مجاز است، نه register
       throw new UnauthorizedException(
         'این ایمیل در Rezvio ثبت نشده است. اگر حساب دارید، لطفاً ابتدا در پروفایل خود ایمیل اضافه کنید، سپس با Google وارد شوید.',
+      );
+    }
+
+    // ──── Phase 24: Banned check (before issuing tokens) ────
+    if (user.isBanned) {
+      this.logger.warn(`Banned user attempted login (Google): ${googleUser.email}`);
+      throw new UnauthorizedException(
+        'حساب کاربری شما مسدود شده است. برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.',
       );
     }
 

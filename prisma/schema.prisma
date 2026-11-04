@@ -44,6 +44,12 @@ model User {
   name       String?
   role       UserRole @default(CUSTOMER)
   nationalId String?  @unique
+
+  // ──── Phase 24: Admin Ban ────
+  isBanned   Boolean   @default(false)
+  bannedAt   DateTime?
+  banReason  String?
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -52,7 +58,8 @@ model User {
   businessLikes   BusinessLike[]
   reviews         BusinessReview[]
   reviewVotes     ReviewVote[]
-  sessions        UserSession[]    // ← NEW: Login history / Active sessions
+  sessions        UserSession[] // ← NEW: Login history / Active sessions
+  adminProfile    Admin? // ← NEW: Admin RBAC profile (Phase 24)
 
   @@map("users")
 }
@@ -363,54 +370,147 @@ model StaffDateBreak {
   @@index([staffId, date])
   @@map("staff_date_breaks")
 }
+
 // ──── Phase 10D: Login History / Active Sessions ────
 model UserSession {
-  id               String   @id @default(uuid())
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // ──── Token tracking (hash نه خود token برای امنیت) ────
-  refreshTokenHash String   @unique
+  refreshTokenHash String @unique
 
   // ──── Device info (از ua-parser-js) ────
-  deviceName       String   // "Chrome on Windows", "Safari on iPhone"
-  deviceType       String   // "desktop", "mobile", "tablet"
-  browser          String?  // "Chrome", "Safari", "Firefox"
-  os               String?  // "Windows", "macOS", "iOS", "Android"
+  deviceName String // "Chrome on Windows", "Safari on iPhone"
+  deviceType String // "desktop", "mobile", "tablet"
+  browser    String? // "Chrome", "Safari", "Firefox"
+  os         String? // "Windows", "macOS", "iOS", "Android"
 
   // ──── Network info ────
-  ipAddress        String   // "185.23.45.67"
-  country          String?  // "Iran"
-  city             String?  // "Tehran"
+  ipAddress String // "185.23.45.67"
+  country   String? // "Iran"
+  city      String? // "Tehran"
 
   // ──── Timestamps ────
-  createdAt        DateTime @default(now())
-  lastActiveAt     DateTime @default(now())
-  expiresAt        DateTime // when refresh token expires
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+  expiresAt    DateTime // when refresh token expires
 
   // ──── Status ────
-  isActive         Boolean  @default(true)
+  isActive Boolean @default(true)
 
   @@index([userId])
   @@index([lastActiveAt])
   @@index([expiresAt])
   @@map("user_sessions")
 }
+
 // ═══════════════════════════════════════════════════════════════
 // IDEMPOTENCY KEYS — جلوگیری از رزرو تکراری (Double-Submit)
 // ═══════════════════════════════════════════════════════════════
 model IdempotencyKey {
-  id          String   @id @default(uuid())
-  key         String   @unique // کلید یکتای ارسالی از کلاینت
-  userId      String   // کاربری که درخواست را ارسال کرده
-  method      String   // HTTP method (POST, PATCH, etc.)
-  path        String   // مسیر اندپوینت
-  statusCode  Int      // کد وضعیت پاسخ ذخیره‌شده
-  responseBody Json    // بدنه پاسخ ذخیره‌شده (برای بازگرداندن همان نتیجه)
-  createdAt   DateTime @default(now())
-  expiresAt   DateTime // زمان انقضا (TTL)
+  id           String   @id @default(uuid())
+  key          String   @unique // کلید یکتای ارسالی از کلاینت
+  userId       String // کاربری که درخواست را ارسال کرده
+  method       String // HTTP method (POST, PATCH, etc.)
+  path         String // مسیر اندپوینت
+  statusCode   Int // کد وضعیت پاسخ ذخیره‌شده
+  responseBody Json // بدنه پاسخ ذخیره‌شده (برای بازگرداندن همان نتیجه)
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime // زمان انقضا (TTL)
 
   @@index([userId])
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 24: Admin RBAC (Role-Based Access Control)
+// ═══════════════════════════════════════════════════════════════
+
+// ۱. نقش‌های ادمین (Admin Roles)
+// - Super Admin: همه‌ی دسترسی‌ها (خود مالک سایت)
+// - Booking Manager: فقط مدیریت رزروها
+// - Business Manager: فقط مدیریت کسب‌وکارها
+// - Support Agent: فقط مشاهده و پاسخگویی به کاربران
+model AdminRole {
+  id          String   @id @default(uuid())
+  name        String   @unique // "Super Admin", "Booking Manager", ...
+  description String?
+  isSystem    Boolean  @default(false) // نقش‌های سیستمی قابل حذف نیستن
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  admins      Admin[]
+  permissions RolePermission[]
+
+  @@map("admin_roles")
+}
+
+// ۲. مجوزها (Permissions) - دانه‌ای و قابل توسعه
+// فرمت code: "module:action" (مثلاً "booking:view", "user:delete")
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique // "booking:view"
+  description String?
+  module      String // "booking", "user", "business", "category", "admin", "report"
+  action      String // "view", "create", "update", "delete", "export", "ban", "impersonate"
+  createdAt   DateTime @default(now())
+
+  roles RolePermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+// ۳. اتصال Many-to-Many نقش ↔ مجوز
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         AdminRole  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ۴. ادمین‌ها (فقط کاربرانی که User.role = ADMIN)
+// - userId: FK به جدول User (role باید ADMIN باشه)
+// - roleId: نقش ادمین (Super Admin, Booking Manager, ...)
+model Admin {
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId    String
+  role      AdminRole @relation(fields: [roleId], references: [id])
+  isActive  Boolean   @default(true)
+  createdBy String? // ID ادمینی که این ادمین رو ساخته
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  activityLogs AdminActivityLog[]
+
+  @@index([roleId])
+  @@index([isActive])
+  @@map("admins")
+}
+
+// ۵. لاگ فعالیت ادمین (Audit Log غیرقابل تغییر)
+// - هر عملیات حساس (حذف، تغییر نقش، impersonate) ثبت می‌شه
+model AdminActivityLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  admin      Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  action     String // "user.ban", "booking.cancel", "admin.create", "impersonate.start"
+  targetType String? // "User", "Booking", "Business", "Admin"
+  targetId   String?
+  metadata   Json? // جزئیات اضافی (مثلاً دلیل بن، مقدار قبلی، مقدار جدید)
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+  @@map("admin_activity_logs")
 }
