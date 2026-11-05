@@ -16,7 +16,7 @@ import { UserRole } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../otp/otp.service';
-import { MAX_ACTIVE_SESSIONS, SessionDto, SessionService } from './session.service';
+import { getMaxActiveSessions, SessionDto, SessionService } from './session.service';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
@@ -276,7 +276,8 @@ export class AuthService {
 
     // ۲) سقف دستگاه‌های فعال — فقط سشن‌های فعال و منقضی‌نشده شمرده می‌شوند
     const activeCount = await this.sessionService.countActiveSessions(user.id);
-    if (activeCount >= MAX_ACTIVE_SESSIONS) {
+    const maxSessions = getMaxActiveSessions(user.role);
+    if (activeCount >= maxSessions) {
       const pendingToken = await this.sessionService.issuePendingLoginToken(
         user.id,
         rememberMe,
@@ -284,13 +285,13 @@ export class AuthService {
       );
       const activeSessions = await this.sessionService.getActiveSessions(user.id);
       this.logger.warn(
-        `⛔ Device limit reached for user ${user.id} (${activeCount}/${MAX_ACTIVE_SESSIONS} active)`,
+        `⛔ Device limit reached for user ${user.id} (${activeCount}/${maxSessions} active)`,
       );
       throw new ConflictException({
         statusCode: HttpStatus.CONFLICT,
         error: 'Conflict',
         code: 'DEVICE_LIMIT_REACHED',
-        message: `سقف دستگاه‌های فعال شما (${MAX_ACTIVE_SESSIONS} دستگاه) پر است. برای ادامه، یکی از دستگاه‌های فعلی را خارج کنید.`,
+        message: `سقف دستگاه‌های فعال شما (${maxSessions} دستگاه) پر است. برای ادامه، یکی از دستگاه‌های فعلی را خارج کنید.`,
         activeSessions,
         pendingToken,
       });
