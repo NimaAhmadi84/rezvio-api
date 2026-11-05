@@ -40,6 +40,19 @@ import { QueryAdminsDto } from './dto/query-admins.dto';
 export class AdminManagementController {
   constructor(private readonly service: AdminManagementService) {}
 
+  // ──── Self ────
+
+  @Get('me')
+  @ApiOperation({
+    summary: 'پروفایل ادمین فعلی + مجوزها (بدون نیاز به permission)',
+  })
+  @ApiResponse({ status: 200, description: 'اطلاعات ادمین فعلی' })
+  @ApiResponse({ status: 404, description: 'پروفایل ادمین یافت نشد' })
+  @ApiResponse({ status: 403, description: 'ادمین غیرفعال' })
+  getMe(@CurrentUser() admin: AuthUserDto) {
+    return this.service.getMe(admin.id);
+  }
+
   // ──── Admins ────
 
   @Get('admins')

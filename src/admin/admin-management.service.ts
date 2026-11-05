@@ -618,4 +618,58 @@ export class AdminManagementService {
     this.logger.warn(`Role "${target.name}" deleted by admin ${actingAdminId}`);
     return { success: true, message: 'نقش حذف شد' };
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // 👤 Current Admin (Self)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * پروفایل ادمین فعلی + مجوزهای نقشش
+   * بدون نیاز به هیچ permission — هر ادمین می‌تونه خودش رو ببینه
+   * برای رندر سایدبار/دکمه‌ها در فرانت‌اند استفاده می‌شه
+   */
+  async getMe(userId: string) {
+    const admin = await this.prisma.admin.findUnique({
+      where: { userId },
+      include: {
+        role: {
+          include: {
+            permissions: { include: { permission: true } },
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            isBanned: true,
+          },
+        },
+      },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('پروفایل ادمین یافت نشد');
+    }
+
+    if (!admin.isActive) {
+      throw new ForbiddenException('حساب ادمین شما غیرفعال شده است');
+    }
+
+    return {
+      id: admin.id,
+      userId: admin.userId,
+      isActive: admin.isActive,
+      createdAt: admin.createdAt,
+      role: {
+        id: admin.role.id,
+        name: admin.role.name,
+        description: admin.role.description,
+        isSystem: admin.role.isSystem,
+      },
+      permissions: admin.role.permissions.map((rp) => rp.permission.code),
+      user: admin.user,
+    };
+  }
 }
