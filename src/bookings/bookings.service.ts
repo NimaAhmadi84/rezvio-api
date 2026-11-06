@@ -42,8 +42,20 @@ const toUTCISO = (d: Date): string => {
  * قوانین تغییر وضعیت رزرو
  */
 const STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
-  [BookingStatus.PENDING]: [BookingStatus.CONFIRMED, BookingStatus.CANCELLED],
-  [BookingStatus.CONFIRMED]: [BookingStatus.COMPLETED, BookingStatus.CANCELLED],
+  // Phase 24 fix: PENDING can also go directly to COMPLETED (past booking,
+  // owner forgot to confirm) or NO_SHOW (customer didn't show up).
+  // Time guards applied in updateStatus() enforce when each is allowed.
+  [BookingStatus.PENDING]: [
+    BookingStatus.CONFIRMED,
+    BookingStatus.COMPLETED,
+    BookingStatus.NO_SHOW,
+    BookingStatus.CANCELLED,
+  ],
+  [BookingStatus.CONFIRMED]: [
+    BookingStatus.COMPLETED,
+    BookingStatus.NO_SHOW,
+    BookingStatus.CANCELLED,
+  ],
   [BookingStatus.COMPLETED]: [],
   [BookingStatus.CANCELLED]: [],
   [BookingStatus.NO_SHOW]: [],
@@ -715,20 +727,59 @@ export class BookingsService {
       );
     }
 
-    let bookingsCountDelta = 0;
-    const wasConfirmed = booking.status === BookingStatus.CONFIRMED;
-    const willBeConfirmed = dto.status === BookingStatus.CONFIRMED;
-    const willBeCancelled = dto.status === BookingStatus.CANCELLED;
+    // ──── Phase 24 fix: Time guards (past booking sanity) ────
+    const now = new Date();
+    const isPast = booking.endTime < now; // کل بازه تمام شده
+    const hasStarted = booking.startTime <= now; // شروع شده یا گذشته
 
-    if (!wasConfirmed && willBeConfirmed) {
+    // PENDING → CONFIRMED: فقط اگر رزرو هنوز ongoing یا آینده باشد (grace period)
+    if (
+      booking.status === BookingStatus.PENDING &&
+      dto.status === BookingStatus.CONFIRMED &&
+      isPast
+    ) {
+      throw new BadRequestException(
+        'این رزرو منقضی شده است. برای رزرو گذشته فقط «تکمیل‌شده»، «عدم‌حضور» یا «لغو» مجاز است.',
+      );
+    }
+
+    // PENDING → COMPLETED: فقط اگر رزرو شروع شده باشد
+    if (
+      booking.status === BookingStatus.PENDING &&
+      dto.status === BookingStatus.COMPLETED &&
+      !hasStarted
+    ) {
+      throw new BadRequestException(
+        'نمی‌توان رزروی را که هنوز شروع نشده، «تکمیل‌شده» ثبت کرد.',
+      );
+    }
+
+    // هر → NO_SHOW: فقط اگر رزرو شروع شده باشد (نه آینده)
+    if (dto.status === BookingStatus.NO_SHOW && !hasStarted) {
+      throw new BadRequestException(
+        '«عدم‌حضور» فقط برای رزروی که زمانش رسیده یا گذشته مجاز است.',
+      );
+    }
+
+    // ──── Phase 24 fix: bookingsCount delta ────
+    // "counted" = booking contributes to business.bookingsCount.
+    // CONFIRMED و COMPLETED هر دو counted محسوب می‌شوند (کار انجام شده/در جریان).
+    // PENDING / CANCELLED / NO_SHOW counted نیستند.
+    const wasCounted = booking.status === BookingStatus.CONFIRMED;
+    const willBeCounted =
+      dto.status === BookingStatus.CONFIRMED ||
+      dto.status === BookingStatus.COMPLETED;
+
+    let bookingsCountDelta = 0;
+    if (!wasCounted && willBeCounted) {
       bookingsCountDelta = 1;
       this.logger.log(
-        `📈 Incrementing bookingsCount for business ${booking.businessId} (PENDING → CONFIRMED)`,
+        `📈 Incrementing bookingsCount for business ${booking.businessId} (${booking.status} → ${dto.status})`,
       );
-    } else if (wasConfirmed && willBeCancelled) {
+    } else if (wasCounted && !willBeCounted) {
       bookingsCountDelta = -1;
       this.logger.log(
-        `📉 Decrementing bookingsCount for business ${booking.businessId} (CONFIRMED → CANCELLED)`,
+        `📉 Decrementing bookingsCount for business ${booking.businessId} (${booking.status} → ${dto.status})`,
       );
     }
 
