@@ -16,7 +16,7 @@ import { UserRole } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../otp/otp.service';
-import { MAX_ACTIVE_SESSIONS, SessionDto, SessionService } from './session.service';
+import { getMaxActiveSessions, SessionDto, SessionService } from './session.service';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto, AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
@@ -153,6 +153,12 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('شناسه یا رمز عبور اشتباه است');
     }
+    if (user.isBanned) {
+      this.logger.warn(`Banned user attempted login (password): ${identifier}`);
+      throw new UnauthorizedException(
+        'حساب کاربری شما مسدود شده است. برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.',
+      );
+    }
     return this.generateTokens(this.toAuthUserDto(user), rememberMe, userAgent, ip, currentSessionId);
   }
 
@@ -197,6 +203,14 @@ export class AuthService {
       user = await this.usersService.createMinimal(data);
       isNew = true;
       this.logger.log(`🆕 کاربر جدید ثبت‌نام شد: ${identifier} | Phone: ${phone || 'N/A'}`);
+    }
+
+    // ──── Phase 24: Banned check (before issuing tokens) ────
+    if (user.isBanned) {
+      this.logger.warn(`Banned user attempted login (OTP): ${identifier}`);
+      throw new UnauthorizedException(
+        'حساب کاربری شما مسدود شده است. برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.',
+      );
     }
 
     const response = await this.generateTokens(
@@ -262,7 +276,8 @@ export class AuthService {
 
     // ۲) سقف دستگاه‌های فعال — فقط سشن‌های فعال و منقضی‌نشده شمرده می‌شوند
     const activeCount = await this.sessionService.countActiveSessions(user.id);
-    if (activeCount >= MAX_ACTIVE_SESSIONS) {
+    const maxSessions = getMaxActiveSessions(user.role);
+    if (activeCount >= maxSessions) {
       const pendingToken = await this.sessionService.issuePendingLoginToken(
         user.id,
         rememberMe,
@@ -270,13 +285,13 @@ export class AuthService {
       );
       const activeSessions = await this.sessionService.getActiveSessions(user.id);
       this.logger.warn(
-        `⛔ Device limit reached for user ${user.id} (${activeCount}/${MAX_ACTIVE_SESSIONS} active)`,
+        `⛔ Device limit reached for user ${user.id} (${activeCount}/${maxSessions} active)`,
       );
       throw new ConflictException({
         statusCode: HttpStatus.CONFLICT,
         error: 'Conflict',
         code: 'DEVICE_LIMIT_REACHED',
-        message: `سقف دستگاه‌های فعال شما (${MAX_ACTIVE_SESSIONS} دستگاه) پر است. برای ادامه، یکی از دستگاه‌های فعلی را خارج کنید.`,
+        message: `سقف دستگاه‌های فعال شما (${maxSessions} دستگاه) پر است. برای ادامه، یکی از دستگاه‌های فعلی را خارج کنید.`,
         activeSessions,
         pendingToken,
       });
@@ -408,6 +423,14 @@ export class AuthService {
       // کاربر وجود ندارد — فقط login مجاز است، نه register
       throw new UnauthorizedException(
         'این ایمیل در Rezvio ثبت نشده است. اگر حساب دارید، لطفاً ابتدا در پروفایل خود ایمیل اضافه کنید، سپس با Google وارد شوید.',
+      );
+    }
+
+    // ──── Phase 24: Banned check (before issuing tokens) ────
+    if (user.isBanned) {
+      this.logger.warn(`Banned user attempted login (Google): ${googleUser.email}`);
+      throw new UnauthorizedException(
+        'حساب کاربری شما مسدود شده است. برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.',
       );
     }
 

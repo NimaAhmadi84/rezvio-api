@@ -27,6 +27,7 @@ import { BusinessImagesModule } from './business-images/business-images.module';
 import { BusinessLikesModule } from './business-likes/business-likes.module';
 import { BusinessReviewsModule } from './business-reviews/business-reviews.module';
 import { validateEnv } from './config/env.validation';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { validateEnv } from './config/env.validation';
     StatsModule,
     BusinessLikesModule,
     BusinessReviewsModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [

@@ -19,7 +19,16 @@ import { randomUUID, createHash } from 'node:crypto';
 // Phase 10D+: سقف دستگاه‌های فعال همزمان برای هر کاربر
 // (الگوی Adobe: کاربر خودش انتخاب می‌کند کدام دستگاه بیرون برود)
 // ═══════════════════════════════════════════════════════════════
-export const MAX_ACTIVE_SESSIONS = 3;
+export const MAX_ACTIVE_SESSIONS = 3; // legacy — use getMaxActiveSessions(role)
+
+// Phase 24: role-based device limit
+export function getMaxActiveSessions(
+  role: 'CUSTOMER' | 'OWNER' | 'ADMIN',
+): number {
+  if (role === 'ADMIN') return 10;
+  if (role === 'OWNER') return 5;
+  return 3;
+}
 
 // ──── فاصله‌ی حداقلی بین دو آپدیت lastActiveAt (cache-guard — طبق §8) ────
 const LAST_ACTIVE_TOUCH_TTL_MS = 5 * 60 * 1000; // ۵ دقیقه
