@@ -32,6 +32,7 @@ import { UpdateAdminDto } from './dto/update-admin.dto';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { QueryAdminsDto } from './dto/query-admins.dto';
+import { QueryActivityLogsDto } from './dto/query-activity-logs.dto';
 
 @ApiTags('Admin — Admins & Roles')
 @Controller('admin')
@@ -189,5 +190,17 @@ export class AdminManagementController {
   @ApiOperation({ summary: 'لیست همه مجوزها (گروه‌بندی بر اساس ماژول)' })
   listPermissions() {
     return this.service.listPermissions();
+  }
+
+  // ──── Activity Log (Audit Trail) ────
+
+  @Get('activity-logs')
+  @RequirePermissions('admin:view')
+  @ApiOperation({
+    summary: 'لیست لاگ فعالیت ادمین‌ها (فیلتر: action, adminId, targetType, dates)',
+  })
+  @ApiResponse({ status: 200, description: 'لیست لاگ‌ها با meta pagination' })
+  listActivityLogs(@Query() dto: QueryActivityLogsDto) {
+    return this.service.listActivityLogs(dto);
   }
 }

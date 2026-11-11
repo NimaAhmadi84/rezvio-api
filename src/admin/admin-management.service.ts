@@ -16,6 +16,7 @@ import { UpdateAdminDto } from './dto/update-admin.dto';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { QueryAdminsDto } from './dto/query-admins.dto';
+import { QueryActivityLogsDto } from './dto/query-activity-logs.dto';
 
 const SUPER_ADMIN_ROLE_NAME = 'Super Admin';
 const ADMIN_PERM_CACHE_PREFIX = 'admin-perm:';
@@ -670,6 +671,179 @@ export class AdminManagementService {
       },
       permissions: admin.role.permissions.map((rp) => rp.permission.code),
       user: admin.user,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 📋 Audit Log
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * لیست لاگ‌های فعالیت ادمین‌ها با فیلتر و pagination
+   */
+  async listActivityLogs(dto: QueryActivityLogsDto) {
+    const page = Number(dto.page) || 1;
+    const limit = Number(dto.limit) || 30;
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (dto.action) where.action = { equals: dto.action };
+    if (dto.adminId) where.adminId = dto.adminId;
+    if (dto.targetType) where.targetType = dto.targetType;
+    if (dto.targetId) where.targetId = dto.targetId;
+
+    if (dto.q && dto.q.trim()) {
+      const q = dto.q.trim();
+      where.OR = [
+        { action: { contains: q, mode: 'insensitive' } },
+        { targetId: { contains: q, mode: 'insensitive' } },
+        {
+          admin: {
+            user: {
+              OR: [
+                { name: { contains: q, mode: 'insensitive' } },
+                { email: { contains: q, mode: 'insensitive' } },
+              ],
+            },
+          },
+        },
+      ];
+    }
+
+    if (dto.from || dto.to) {
+      where.createdAt = {};
+      if (dto.from) where.createdAt.gte = new Date(dto.from);
+      if (dto.to) where.createdAt.lte = new Date(dto.to);
+    }
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.adminActivityLog.findMany({
+        where,
+        include: {
+          admin: {
+            include: {
+              user: {
+                select: { id: true, name: true, email: true, phone: true },
+              },
+              role: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.adminActivityLog.count({ where }),
+    ]);
+
+    // ──── Phase 24: Enrich targetLabel (batch-fetch, no N+1) ────
+    const userIds = new Set<string>();
+    const businessIds = new Set<string>();
+    const adminIds = new Set<string>();
+    const roleIds = new Set<string>();
+    const bookingIds = new Set<string>();
+
+    for (const log of items) {
+      if (!log.targetId || !log.targetType) continue;
+      if (log.targetType === 'User') userIds.add(log.targetId);
+      else if (log.targetType === 'Business') businessIds.add(log.targetId);
+      else if (log.targetType === 'Admin') adminIds.add(log.targetId);
+      else if (log.targetType === 'AdminRole') roleIds.add(log.targetId);
+      else if (log.targetType === 'Booking') bookingIds.add(log.targetId);
+    }
+
+    const [users, businesses, admins, roles, bookings] = await Promise.all([
+      userIds.size > 0
+        ? this.prisma.user.findMany({
+            where: { id: { in: [...userIds] } },
+            select: { id: true, name: true, email: true, phone: true },
+          })
+        : Promise.resolve([] as Array<{ id: string; name: string | null; email: string | null; phone: string | null }>),
+      businessIds.size > 0
+        ? this.prisma.business.findMany({
+            where: { id: { in: [...businessIds] } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([] as Array<{ id: string; name: string }>),
+      adminIds.size > 0
+        ? this.prisma.admin.findMany({
+            where: { id: { in: [...adminIds] } },
+            select: {
+              id: true,
+              user: { select: { name: true, email: true } },
+            },
+          })
+        : Promise.resolve([] as Array<{ id: string; user: { name: string | null; email: string | null } }>),
+      roleIds.size > 0
+        ? this.prisma.adminRole.findMany({
+            where: { id: { in: [...roleIds] } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([] as Array<{ id: string; name: string }>),
+      bookingIds.size > 0
+        ? this.prisma.booking.findMany({
+            where: { id: { in: [...bookingIds] } },
+            select: {
+              id: true,
+              customer: { select: { name: true, email: true } },
+              business: { select: { name: true } },
+            },
+          })
+        : Promise.resolve([] as Array<{ id: string; customer: { name: string | null; email: string | null }; business: { name: string } }>),
+    ]);
+
+    const userMap = new Map(
+      users.map((u) => [u.id, u.name || u.email || u.phone || 'کاربر حذف‌شده']),
+    );
+    const businessMap = new Map(businesses.map((b) => [b.id, b.name]));
+    const adminMap = new Map(
+      admins.map((a) => [a.id, a.user.name || a.user.email || 'ادمین حذف‌شده']),
+    );
+    const roleMap = new Map(roles.map((r) => [r.id, r.name]));
+    const bookingMap = new Map(
+      bookings.map((b) => [
+        b.id,
+        `${b.customer.name || b.customer.email || 'مشتری'} — ${b.business.name}`,
+      ]),
+    );
+
+    const enriched = items.map((log) => {
+      let targetLabel: string | null = null;
+      if (log.targetId && log.targetType) {
+        switch (log.targetType) {
+          case 'User':
+            targetLabel = userMap.get(log.targetId) ?? 'کاربر حذف‌شده';
+            break;
+          case 'Business':
+            targetLabel = businessMap.get(log.targetId) ?? 'کسب‌وکار حذف‌شده';
+            break;
+          case 'Admin':
+            targetLabel = adminMap.get(log.targetId) ?? 'ادمین حذف‌شده';
+            break;
+          case 'AdminRole':
+            targetLabel = roleMap.get(log.targetId) ?? 'نقش حذف‌شده';
+            break;
+          case 'Booking':
+            targetLabel = bookingMap.get(log.targetId) ?? 'رزرو حذف‌شده';
+            break;
+        }
+      }
+      return { ...log, targetLabel };
+    });
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      items: enriched,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
     };
   }
 }
