@@ -54,7 +54,9 @@ async function bootstrap() {
     ? [
         'https://rezvio.ir',
         'https://www.rezvio.ir',
-        'https://app.rezvio.ir',
+        'https://admin.rezvio.ir',
+        // TODO: remove after DNS setup (temporary Vercel preview URL)
+        'https://rezvio-web.vercel.app',
       ]
     : true;
 
