@@ -36,6 +36,29 @@ enum ReviewVoteKind {
   DISLIKE
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Phase 27: Support Center — Ticket Enums
+// ═══════════════════════════════════════════════════════════════
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum TicketCategory {
+  TECHNICAL
+  BILLING
+  GENERAL
+  FEATURE_REQUEST
+}
+
 model User {
   id         String   @id @default(uuid())
   email      String?  @unique
@@ -60,6 +83,7 @@ model User {
   reviewVotes     ReviewVote[]
   sessions        UserSession[] // ← NEW: Login history / Active sessions
   adminProfile    Admin? // ← NEW: Admin RBAC profile (Phase 24)
+  supportTickets  SupportTicket[] @relation("UserSupportTickets") // ← NEW: Support tickets (Phase 27)
 
   @@map("users")
 }
@@ -513,4 +537,92 @@ model AdminActivityLog {
   @@index([targetType, targetId])
   @@index([createdAt])
   @@map("admin_activity_logs")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 27: Support Tickets (Customer-facing)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * SupportTicket — تیکت پشتیبانی
+ *
+ * چرخه حیات:
+ *   OPEN → IN_PROGRESS → RESOLVED → CLOSED
+ *   کاربر reply روی RESOLVED → auto reopen به OPEN
+ *   کاربر reply روی CLOSED → 400 (باید تیکت جدید بسازد)
+ *   ادمین reply روی OPEN → auto IN_PROGRESS
+ *
+ * تخصیص (assignedAdminId):
+ *   - null = تیکت بدون مسئول (در صف)
+ *   - set = به یک ادمین خاص تخصیص یافته
+ *   - فقط Super Admin (ticket:assign) می‌تواند تغییر دهد
+ */
+model SupportTicket {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation("UserSupportTickets", fields: [userId], references: [id], onDelete: Cascade)
+
+  // ──── محتوای اصلی ────
+  subject  String         @db.VarChar(200) // ۳-۲۰۰ کاراکتر (اعتبارسنجی DTO)
+  category TicketCategory @default(GENERAL)
+  priority TicketPriority @default(NORMAL)
+  status   TicketStatus   @default(OPEN)
+
+  // ──── تخصیص (اختیاری) ────
+  // در MVP فقط ذخیره می‌شود؛ assign endpoint برای Super Admin
+  assignedAdminId String?
+
+  // ──── لینک به موجودیت مرتبط (اختیاری — ذخیره، ولی در UI اولیه نمایش نمی‌شود) ────
+  relatedType String? // "Booking" | "Business"
+  relatedId   String?
+
+  // ──── Timestamps ────
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  resolvedAt DateTime? // زمان RESOLVED شدن
+  closedAt   DateTime? // زمان CLOSED شدن
+
+  // ──── Relations ────
+  messages TicketMessage[]
+
+  // ──── Indexes ────
+  @@index([userId, createdAt])         // لیست تیکت‌های کاربر
+  @@index([status, createdAt])         // صف ادمین (OPEN/IN_PROGRESS)
+  @@index([priority, createdAt])       // اولویت‌بندی صف
+  @@index([assignedAdminId])           // تیکت‌های تخصیص‌یافته به یک ادمین
+  @@map("support_tickets")
+}
+
+/**
+ * TicketMessage — پیام‌های داخل تیکت
+ *
+ * نکته: senderId و senderName عمداً denormalize شده‌اند (بدون FK).
+ *   - اگر ادمین hard-deleted شود، تاریخچه از بین نمی‌رود
+ *   - senderName snapshot = audit accuracy (نام قدیمی حفظ می‌شود)
+ *   - senderType "USER"/"ADMIN" → تشخیص context در UI
+ *
+ * isInternal:
+ *   - true → فقط ادمین‌ها می‌بینند (internal note)
+ *   - false → کاربر و ادمین هر دو می‌بینند
+ *   - کاربر هرگز نمی‌تواند isInternal=true بسازد (DTO validation)
+ */
+model TicketMessage {
+  id       String        @id @default(uuid())
+  ticketId String
+  ticket   SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  // ──── Sender (denormalized — see comment above) ────
+  senderId   String  // User.id (نه FK — history preserved)
+  senderType String  // "USER" | "ADMIN"
+  senderName String? // snapshot در زمان ارسال
+
+  // ──── محتوا ────
+  text       String  @db.Text // ۱-۵۰۰۰ کاراکتر (DTO validation)
+  isInternal Boolean @default(false) // یادداشت داخلی (فقط ادمین)
+
+  // ──── Timestamps ────
+  createdAt DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
 }

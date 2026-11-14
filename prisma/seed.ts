@@ -76,6 +76,12 @@ const defaultPermissions = [
   // Settings
   { code: 'settings:view',   module: 'settings', action: 'view',   description: 'مشاهده تنظیمات سایت' },
   { code: 'settings:update', module: 'settings', action: 'update', description: 'ویرایش تنظیمات سایت' },
+
+  // Support Tickets (Phase 27)
+  { code: 'ticket:view',          module: 'ticket', action: 'view',          description: 'مشاهده تیکت‌های پشتیبانی' },
+  { code: 'ticket:reply',         module: 'ticket', action: 'reply',         description: 'پاسخ به تیکت‌ها' },
+  { code: 'ticket:change-status', module: 'ticket', action: 'change-status', description: 'تغییر وضعیت تیکت‌ها' },
+  { code: 'ticket:assign',        module: 'ticket', action: 'assign',        description: 'تخصیص تیکت به ادمین (فقط Super Admin)' },
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -90,11 +96,12 @@ const defaultRoles = [
   },
   {
     name: 'Booking Manager',
-    description: 'مدیریت کامل رزروها + مشاهده کاربران',
+    description: 'مدیریت کامل رزروها + مشاهده کاربران و تیکت‌ها',
     isSystem: true,
     permissions: [
       'booking:view', 'booking:update', 'booking:cancel', 'booking:change-status',
       'user:view',
+      'ticket:view', // ← Phase 27 (مشاهده تیکت‌های مرتبط با رزرو)
     ],
   },
   {
@@ -108,11 +115,12 @@ const defaultRoles = [
   },
   {
     name: 'Support Agent',
-    description: 'پاسخگویی به کاربران و مدیریت نوبت‌ها',
+    description: 'پاسخگویی به کاربران و مدیریت نوبت‌ها + تیکت‌های پشتیبانی',
     isSystem: true,
     permissions: [
       'user:view',
       'booking:view', 'booking:change-status',
+      'ticket:view', 'ticket:reply', 'ticket:change-status', // ← Phase 27
     ],
   },
   {
