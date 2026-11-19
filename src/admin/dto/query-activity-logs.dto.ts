@@ -12,7 +12,14 @@ import {
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
-const TARGET_TYPES = ['User', 'Booking', 'Business', 'Admin', 'AdminRole'] as const;
+const TARGET_TYPES = [
+  'User',
+  'Booking',
+  'Business',
+  'Admin',
+  'AdminRole',
+  'SupportTicket', // ← Phase 27: تیکت‌های پشتیبانی
+] as const;
 
 /**
  * QueryActivityLogsDto — فیلتر + pagination برای Audit Log
