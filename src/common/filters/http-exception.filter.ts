@@ -142,6 +142,30 @@ export class HttpExceptionFilter implements ExceptionFilter {
       errorResponse.code = code;
     }
 
+    // ──── Passthrough فیلدهای ساختاریافته‌ی مجاز ────
+    // بعضی exception ها payload شیء با فیلدهای اضافی دارند (مثلاً DEVICE_LIMIT_REACHED
+    // که activeSessions و pendingToken برمی‌گرداند). بدون این بخش، فیلتر آن‌ها را
+    // دور می‌ریزد و کلاینت (UI /auth و تست‌های E2E) نمی‌تواند فلوی سقف دستگاه را
+    // تکمیل کند. Whitelist به‌جای spread کامل، تا فیلدهای ناخواسته (مثل error انگلیسی
+    // یا هر چیزی که آینده اضافه شود) به کلاینت نشت نکند. اصل least-privilege.
+    if (exception instanceof HttpException) {
+      const res = exception.getResponse();
+      if (typeof res === 'object' && res !== null && !Array.isArray(res)) {
+        const obj = res as Record<string, unknown>;
+        const ALLOWED_EXTRA_FIELDS = [
+          'pendingToken',
+          'activeSessions',
+          'details',
+          'errors',
+        ] as const;
+        for (const field of ALLOWED_EXTRA_FIELDS) {
+          if (field in obj && obj[field] !== undefined) {
+            errorResponse[field] = obj[field];
+          }
+        }
+      }
+    }
+
     // در production، خطاهای 5xx فقط پیام عمومی
     if (isProduction && statusCode >= 500 && !(exception instanceof HttpException)) {
       errorResponse.message = 'خطای داخلی سرور. لطفاً بعداً تلاش کنید';
