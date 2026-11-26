@@ -29,6 +29,7 @@ import { BusinessReviewsModule } from './business-reviews/business-reviews.modul
 import { validateEnv } from './config/env.validation';
 import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { SupportModule } from './support/support.module';
     BusinessReviewsModule,
     AdminModule,
     SupportModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [

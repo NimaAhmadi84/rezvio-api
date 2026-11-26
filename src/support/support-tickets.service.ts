@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { Prisma, TicketStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '@prisma/client';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { ReplyTicketDto } from './dto/reply-ticket.dto';
 import { QueryTicketsDto } from './dto/query-tickets.dto';
@@ -65,7 +67,10 @@ function buildPaginationMeta(total: number, page: number, limit: number) {
 export class SupportTicketsService {
   private readonly logger = new Logger(SupportTicketsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   /**
    * ایجاد تیکت جدید + پیام اولیه
@@ -203,7 +208,7 @@ export class SupportTicketsService {
     const newStatus: TicketStatus = statusChanged ? 'OPEN' : ticket.status;
 
     // 6. Atomic: update status (if needed) + create message
-    return this.prisma.$transaction(async (tx) => {
+    const updatedTicket = await this.prisma.$transaction(async (tx) => {
       if (statusChanged) {
         await tx.supportTicket.update({
           where: { id: ticketId },
@@ -235,6 +240,30 @@ export class SupportTicketsService {
         },
       });
     });
+
+    // ──── Phase 28A: Notify assigned admin (if any) ────
+    const ticketFull = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      select: { assignedAdminId: true, subject: true, user: { select: { name: true } } },
+    });
+    
+    if (ticketFull?.assignedAdminId) {
+      const admin = await this.prisma.admin.findUnique({
+        where: { id: ticketFull.assignedAdminId },
+        select: { userId: true },
+      });
+      if (admin) {
+        this.notificationsService.create(
+          admin.userId,
+          NotificationType.TICKET_REPLY,
+          'پاسخ جدید به تیکت',
+          `${ticketFull.user?.name || 'کاربر'} به تیکت «${ticketFull.subject}» پاسخ داد.`,
+          { ticketId },
+        ).catch(() => {}); // Fail-safe
+      }
+    }
+
+    return updatedTicket;
   }
 
   /**

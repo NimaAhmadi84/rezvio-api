@@ -59,6 +59,20 @@ enum TicketCategory {
   FEATURE_REQUEST
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Phase 28A: In-App Notifications
+// ═══════════════════════════════════════════════════════════════
+enum NotificationType {
+  BOOKING_CREATED       // رزرو جدید (برای صاحب کسب‌وکار)
+  BOOKING_CONFIRMED     // تایید رزرو (برای مشتری)
+  BOOKING_CANCELLED     // لغو رزرو (برای هر دو طرف)
+  BOOKING_COMPLETED     // تکمیل رزرو (برای مشتری)
+  BOOKING_NO_SHOW       // عدم حضور (برای مشتری)
+  TICKET_REPLY          // پاسخ جدید به تیکت
+  TICKET_STATUS_CHANGED // تغییر وضعیت تیکت
+  SYSTEM                // اعلان‌های سیستمی (آینده)
+}
+
 model User {
   id         String   @id @default(uuid())
   email      String?  @unique
@@ -84,6 +98,7 @@ model User {
   sessions        UserSession[] // ← NEW: Login history / Active sessions
   adminProfile    Admin? // ← NEW: Admin RBAC profile (Phase 24)
   supportTickets  SupportTicket[] @relation("UserSupportTickets") // ← NEW: Support tickets (Phase 27)
+  notifications   Notification[]  @relation("UserNotifications") // ← NEW: In-app notifications (Phase 28A)
 
   @@map("users")
 }
@@ -625,4 +640,33 @@ model TicketMessage {
 
   @@index([ticketId, createdAt])
   @@map("ticket_messages")
+}
+
+/**
+ * Notification — اعلان‌های درون‌برنامه‌ای (Phase 28A)
+ *
+ * چرخه حیات:
+ *   - توسط service ها به‌صورت خودکار ساخته می‌شود (booking/ticket triggers)
+ *   - isRead=false پیش‌فرض → badge قرمز در UI
+ *   - کاربر می‌تواند خوانده‌شده علامت بزند یا حذف کند
+ *   - هرگز auto-delete نمی‌شود (نگهداری دائمی)
+ *
+ * data: JSON اختیاری برای لینک به موجودیت مرتبط
+ *   { bookingId, ticketId, businessId, etc. }
+ */
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String           @db.VarChar(200)
+  body      String           @db.Text
+  data      Json?            // { bookingId, ticketId, ... }
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, createdAt])  // لیست اعلان‌ها (جدیدترین اول)
+  @@index([userId, isRead])     // شمارش unread (برای badge)
+  @@map("notifications")
 }

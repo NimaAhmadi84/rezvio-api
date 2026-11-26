@@ -7,6 +7,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '@prisma/client';
 import { sanitizeText } from '../common/utils/sanitize.util';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
@@ -69,6 +71,7 @@ export class BookingsService {
   private readonly logger = new Logger(BookingsService.name);
   constructor(
     private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
     private readonly businessesService: BusinessesService,
     private readonly availabilityService: AvailabilityService,
   ) {}
@@ -357,6 +360,18 @@ export class BookingsService {
           `[IDEMPOTENCY] Concurrent duplicate detected for key ${dto.idempotencyKey}`,
         );
         return result.body;
+      }
+
+      // ──── Phase 28A: Notification trigger (after commit, fail-safe) ────
+      const createdBooking = result.body as any;
+      if (createdBooking && createdBooking.business) {
+        this.notificationsService.create(
+          createdBooking.business.ownerId,
+          NotificationType.BOOKING_CREATED,
+          'رزرو جدید',
+          `${createdBooking.customer?.name || 'یک مشتری'} برای خدمت «${createdBooking.service?.name || 'شما'}» نوبت رزرو کرد.`,
+          { bookingId: createdBooking.id, businessId: createdBooking.businessId },
+        ).catch(() => {}); // never break main flow
       }
 
       return result.body;
@@ -783,8 +798,8 @@ export class BookingsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const updatedBooking = await tx.booking.update({
+    const updatedBooking = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.booking.update({
         where: { id },
         data: { status: dto.status },
       });
@@ -800,8 +815,64 @@ export class BookingsService {
         });
       }
 
-      return updatedBooking;
+      return updated;
     });
+
+    // ──── Phase 28A: Notification triggers for status change ────
+    const status = dto.status;
+    const bookingInfo = await this.prisma.booking.findUnique({
+      where: { id },
+      select: { customerId: true, business: { select: { ownerId: true } }, service: { select: { name: true } } },
+    });
+
+    if (bookingInfo) {
+      const serviceName = bookingInfo.service?.name || 'رزرو';
+
+      if (status === BookingStatus.CONFIRMED) {
+        this.notificationsService.create(
+          bookingInfo.customerId,
+          NotificationType.BOOKING_CONFIRMED,
+          'تأیید رزرو',
+          `رزرو شما برای «${serviceName}» توسط کسب‌وکار تأیید شد.`,
+          { bookingId: id },
+        ).catch(() => {});
+      } else if (status === BookingStatus.CANCELLED) {
+        // به مشتری
+        this.notificationsService.create(
+          bookingInfo.customerId,
+          NotificationType.BOOKING_CANCELLED,
+          'لغو رزرو',
+          `رزرو شما برای «${serviceName}» لغو شد.`,
+          { bookingId: id },
+        ).catch(() => {});
+        // به صاحب کسب‌وکار
+        this.notificationsService.create(
+          bookingInfo.business.ownerId,
+          NotificationType.BOOKING_CANCELLED,
+          'لغو رزرو',
+          `رزرو «${serviceName}» توسط مشتری لغو شد.`,
+          { bookingId: id },
+        ).catch(() => {});
+      } else if (status === BookingStatus.COMPLETED) {
+        this.notificationsService.create(
+          bookingInfo.customerId,
+          NotificationType.BOOKING_COMPLETED,
+          'تکمیل رزرو',
+          `رزرو شما برای «${serviceName}» با موفقیت انجام شد. ممنون از انتخاب شما.`,
+          { bookingId: id },
+        ).catch(() => {});
+      } else if (status === BookingStatus.NO_SHOW) {
+        this.notificationsService.create(
+          bookingInfo.customerId,
+          NotificationType.BOOKING_NO_SHOW,
+          'عدم حضور',
+          `متأسفانه شما در زمان رزرو شده برای «${serviceName}» حضور نداشتید.`,
+          { bookingId: id },
+        ).catch(() => {});
+      }
+    }
+
+    return updatedBooking;
   }
 
   /**
@@ -931,8 +1002,8 @@ export class BookingsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const cancelledBooking = await tx.booking.update({
+    const cancelledBooking = await this.prisma.$transaction(async (tx) => {
+      const cancelled = await tx.booking.update({
         where: { id },
         data: {
           status: BookingStatus.CANCELLED,
@@ -950,8 +1021,26 @@ export class BookingsService {
         });
       }
 
-      return cancelledBooking;
+      return cancelled;
     });
+
+    // ──── Phase 28A: Notify owner of cancellation with reason ────
+    const bookingInfo = await this.prisma.booking.findUnique({
+      where: { id },
+      select: { business: { select: { ownerId: true } }, service: { select: { name: true } } },
+    });
+
+    if (bookingInfo) {
+      this.notificationsService.create(
+        bookingInfo.business.ownerId,
+        NotificationType.BOOKING_CANCELLED,
+        'لغو رزرو توسط مشتری',
+        `رزرو «${bookingInfo.service?.name || ''}» توسط مشتری لغو شد. دلیل: ${sanitizedReason.substring(0, 50)}...`,
+        { bookingId: id },
+      ).catch(() => {});
+    }
+
+    return cancelledBooking;
   }
 
   /**

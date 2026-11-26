@@ -11,6 +11,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdminActivityLogger } from '../admin/admin-activity-logger.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '@prisma/client';
 import { QueryAdminTicketsDto } from './dto/query-admin-tickets.dto';
 import { ReplyTicketDto } from './dto/reply-ticket.dto';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto';
@@ -70,6 +72,7 @@ export class AdminSupportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly activityLogger: AdminActivityLogger,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ──── Read ────
@@ -251,6 +254,24 @@ export class AdminSupportService {
     this.logger.log(
       `Admin ${admin.id} replied to ticket ${ticketId}${dto.isInternal ? ' (internal)' : ''}`,
     );
+
+    // ──── Phase 28A: Notify ticket owner (fail-safe, skip internal notes) ────
+    if (!dto.isInternal) {
+      const ticketWithUser = await this.prisma.supportTicket.findUnique({
+        where: { id: ticketId },
+        select: { userId: true, subject: true },
+      });
+      if (ticketWithUser) {
+        this.notificationsService.create(
+          ticketWithUser.userId,
+          NotificationType.TICKET_REPLY,
+          'پاسخ جدید از پشتیبانی',
+          `تیکت شما با موضوع «${ticketWithUser.subject}» پاسخ جدیدی از طرف پشتیبانی دریافت کرد.`,
+          { ticketId },
+        ).catch(() => {});
+      }
+    }
+
     return message;
   }
 
@@ -310,6 +331,28 @@ export class AdminSupportService {
     this.logger.log(
       `Admin ${admin.id} changed ticket ${ticketId} status: ${ticket.status} → ${dto.status}`,
     );
+
+    // ──── Phase 28A: Notify ticket owner of status change ────
+    const ticketWithUser = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      select: { userId: true, subject: true },
+    });
+    if (ticketWithUser) {
+      const statusLabels: Record<string, string> = {
+        OPEN: 'باز',
+        IN_PROGRESS: 'در حال بررسی',
+        RESOLVED: 'حل‌شده',
+        CLOSED: 'بسته‌شده',
+      };
+      this.notificationsService.create(
+        ticketWithUser.userId,
+        NotificationType.TICKET_STATUS_CHANGED,
+        'تغییر وضعیت تیکت',
+        `وضعیت تیکت «${ticketWithUser.subject}» به «${statusLabels[dto.status] || dto.status}» تغییر کرد.`,
+        { ticketId, from: ticket.status, to: dto.status },
+      ).catch(() => {});
+    }
+
     return this.findOne(ticketId);
   }
 
