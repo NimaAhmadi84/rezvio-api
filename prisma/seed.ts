@@ -82,6 +82,11 @@ const defaultPermissions = [
   { code: 'ticket:reply',         module: 'ticket', action: 'reply',         description: 'پاسخ به تیکت‌ها' },
   { code: 'ticket:change-status', module: 'ticket', action: 'change-status', description: 'تغییر وضعیت تیکت‌ها' },
   { code: 'ticket:assign',        module: 'ticket', action: 'assign',        description: 'تخصیص تیکت به ادمین (فقط Super Admin)' },
+
+  // Site Reviews (Phase 29) — نظرات کاربران درباره خود سایت
+  { code: 'site-review:view',    module: 'site-review', action: 'view',     description: 'مشاهده نظرات کاربران درباره سایت' },
+  { code: 'site-review:moderate', module: 'site-review', action: 'moderate', description: 'تأیید یا رد نظرات کاربران درباره سایت' },
+  { code: 'site-review:delete',  module: 'site-review', action: 'delete',   description: 'حذف نظرات کاربران درباره سایت' },
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -121,6 +126,7 @@ const defaultRoles = [
       'user:view',
       'booking:view', 'booking:change-status',
       'ticket:view', 'ticket:reply', 'ticket:change-status', // ← Phase 27
+      'site-review:view', 'site-review:moderate', // ← Phase 29: بررسی نظرات سایت
     ],
   },
   {
@@ -130,6 +136,7 @@ const defaultRoles = [
     permissions: [
       'category:view', 'category:create', 'category:update', 'category:delete',
       'business:view',
+      'site-review:view', 'site-review:moderate', // ← Phase 29: بررسی نظرات سایت
     ],
   },
 ];

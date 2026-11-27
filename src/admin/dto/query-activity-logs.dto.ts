@@ -19,6 +19,7 @@ const TARGET_TYPES = [
   'Admin',
   'AdminRole',
   'SupportTicket', // ← Phase 27: تیکت‌های پشتیبانی
+  'SiteReview', // ← Phase 29: نظرات کاربران درباره سایت
 ] as const;
 
 /**

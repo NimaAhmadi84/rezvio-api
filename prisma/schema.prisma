@@ -70,7 +70,19 @@ enum NotificationType {
   BOOKING_NO_SHOW       // عدم حضور (برای مشتری)
   TICKET_REPLY          // پاسخ جدید به تیکت
   TICKET_STATUS_CHANGED // تغییر وضعیت تیکت
+  SITE_REVIEW_APPROVED  // نظر کاربر درباره سایت تأیید شد
+  SITE_REVIEW_REJECTED  // نظر کاربر درباره سایت رد شد
   SYSTEM                // اعلان‌های سیستمی (آینده)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 29: Site Reviews — «تجربه خود را به اشتراک بگذارید»
+// نقد و بررسی کاربران درباره خود سایت رزویو (نه کسب‌وکارها)
+// ═══════════════════════════════════════════════════════════════
+enum SiteReviewStatus {
+  PENDING   // منتظر بررسی ادمین
+  APPROVED  // تأیید شده — قابل نمایش عمومی
+  REJECTED  // رد شده (با دلیل اختیاری)
 }
 
 model User {
@@ -99,6 +111,7 @@ model User {
   adminProfile    Admin? // ← NEW: Admin RBAC profile (Phase 24)
   supportTickets  SupportTicket[] @relation("UserSupportTickets") // ← NEW: Support tickets (Phase 27)
   notifications   Notification[]  @relation("UserNotifications") // ← NEW: In-app notifications (Phase 28A)
+  siteReviews     SiteReview[]     @relation("UserSiteReviews") // ← NEW: Site reviews (Phase 29)
 
   @@map("users")
 }
@@ -669,4 +682,45 @@ model Notification {
   @@index([userId, createdAt])  // لیست اعلان‌ها (جدیدترین اول)
   @@index([userId, isRead])     // شمارش unread (برای badge)
   @@map("notifications")
+}
+
+/**
+ * SiteReview — نظرات و بازخورد کاربران درباره خود سایت رزویو (Phase 29)
+ *
+ * چرخه حیات:
+ *   - کاربر لاگین‌کننده با POST /site-reviews نظر می‌نویسد → PENDING
+ *   - ادمین از پنل مدیریت تأیید (APPROVED) یا رد (REJECTED) می‌کند
+ *   - فقط نظرات APPROVED در لیست عمومی و مجموعه نمایش داده می‌شوند
+ *   - هر کاربر فقط یک نظر دارد (@@unique([userId])) — ویرایش نظر
+ *     وضعیتش را دوباره به PENDING برمی‌گرداند (برای بررسی مجدد)
+ *
+ * moderatedBy: Admin.id (همانند assignedAdminId در تیکت — نه User.id)
+ * rejectReason: برای اطلاع کاربرِ نظردهنده (اختیاری)
+ */
+model SiteReview {
+  id       String          @id @default(uuid())
+  userId   String
+  user     User            @relation("UserSiteReviews", fields: [userId], references: [id], onDelete: Cascade)
+
+  // ──── محتوای نظر ────
+  rating   Int             // ۱..۵ (اعتبارسنجی DTO)
+  title    String?         @db.VarChar(100)
+  text     String          @db.Text // ۱۰-۱۰۰۰ کاراکتر (اعتبارسنجی DTO)
+
+  // ──── وضعیت و بررسی ────
+  status    SiteReviewStatus @default(PENDING)
+  rejectReason String?     @db.VarChar(255) // دلیل رد (اختیاری)
+
+  // ──── Moderation (admin) ────
+  moderatedBy String? // Admin.id (نه User.id)
+  moderatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ──── Indexes ────
+  @@unique([userId]) // هر کاربر فقط یک نظر
+  @@index([status, createdAt]) // صف بررسی ادمین (PENDING)
+  @@index([rating, createdAt]) // مرتب‌سازی بر اساس امتیاز
+  @@map("site_reviews")
 }

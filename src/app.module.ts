@@ -30,6 +30,7 @@ import { validateEnv } from './config/env.validation';
 import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { SiteReviewsModule } from './site-reviews/site-reviews.module';
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     AdminModule,
     SupportModule,
     NotificationsModule,
+    SiteReviewsModule,
   ],
   controllers: [AppController],
   providers: [
