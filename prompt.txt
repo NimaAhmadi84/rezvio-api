@@ -1,0 +1,254 @@
+════════════════════════════════════════════════════════════════════════════
+PROMPT — Site Reviews Frontend (rezvio-web)
+════════════════════════════════════════════════════════════════════════════
+
+You are implementing the **Site Reviews (تجربه‌های کاربران)** frontend for
+Rezvio. You have access to the `rezvio-web` repository (Next.js 16 App
+Router, TypeScript, Tailwind CSS, Persian/RTL UI).
+
+The backend API is **already built and deployed** in the separate
+`rezvio-api` repository (Phase 29 — Site Reviews). You do NOT need to touch
+the backend. Your job: build the complete customer + admin UI that consumes
+the API described below, following the existing codebase patterns.
+
+════════════════════════════════════════════════════════════════════════════
+CONTEXT — READ THESE FIRST
+════════════════════════════════════════════════════════════════════════════
+
+- `src/lib/api.ts` (or the equivalent existing fetch helper used across the
+  app) — the canonical API client wrapper. API calls go to same-origin
+  `/api/*` paths (e.g. `/api/site-reviews`); never call localhost/127.0.0.1.
+  If you need a new endpoint family, extend the existing helper instead of
+  inventing a parallel one.
+- `src/app/(dashboard)/dashboard/notifications/page.tsx` — canonical list
+  page: tabs, pagination, empty/loading/error states, per-row actions,
+  SweetAlert confirmations, RTL layout. Mirror this pattern closely.
+- `src/app/(dashboard)/dashboard/notifications/components/NotificationBell.tsx`
+  — component composition + styling conventions.
+- Admin pages: `src/app/(admin)/admin/` (e.g. the support-tickets admin
+  page) — canonical admin table/list pattern: filters, pagination, row
+  actions, confirm dialogs, and the admin sidebar/nav registration.
+- Dashboard layout: `desktopNavLinks` + mobile menu `navItems` — new customer
+  page must be registered in both (see notifications: navbar link + mobile
+  slide-in panel item).
+- Admin layout: register the new admin nav item in the sidebar alongside
+  Support Tickets.
+- Auth: user session is JWT-based. Protected actions that receive `401`
+  should redirect to login (existing convention). Admin pages are gated by
+  the existing admin session/layout.
+
+════════════════════════════════════════════════════════════════════════════
+API CONTRACT (base: same-origin `/api`)
+════════════════════════════════════════════════════════════════════════════
+
+All responses are JSON. Error responses carry a `message` field (Persian).
+Handle at minimum: `401` (redirect to login), `403` (forbidden), `404`
+(not found), `409` (conflict — duplicate review / re-moderation).
+
+Common shapes:
+
+Review (customer-facing, used by list/detail/mine/summary endpoints):
+  {
+    id: string,              // UUID
+    rating: number,          // 1..5
+    title: string | null,    // optional, max 100 chars
+    text: string,            // review body, 10..1000 chars
+    status: "PENDING" | "APPROVED" | "REJECTED",
+    rejectReason: string | null,
+    moderatedAt: string | null,   // ISO date
+    createdAt: string,
+    updatedAt: string,
+    name: string              // reviewer display name
+  }
+
+Paginated list response:
+  {
+    items: Review[],
+    meta: { total: number, page: number, limit: number,
+            totalPages: number, hasNext: boolean, hasPrev: boolean }
+  }
+
+Summary (from list response or the summary endpoint):
+  {
+    average: number,                 // e.g. 4.5
+    count: number,
+    distribution: [n5, n4, n3, n2, n1]  // count per rating, index 0 = 5 stars
+  }
+
+────────────────────────────────────────────────────────────────────────
+CUSTOMER ENDPOINTS (`/api/site-reviews`)
+────────────────────────────────────────────────────────────────────────
+
+POST /site-reviews
+  Auth: required (logged-in user). Rate-limited server-side (5/min).
+  Body: { rating: number (1..5), title?: string (<=100),
+          text: string (10..1000) }
+  201 → full review object (includes `userId`, `user: { id, name }`).
+  409 → user already has a review ("شما قبلاً نظر خود را ثبت کرده‌اید...").
+
+GET /site-reviews
+  Public (guest OK; optional auth). Returns APPROVED reviews only.
+  Query: page (default 1), limit (default 10, max 50),
+         rating (1..5 filter), sort = "newest" | "highest" | "lowest"
+         (default "newest"), q (search text/reviewer name)
+  200 → { items, meta, summary } (summary over ALL approved reviews).
+
+GET /site-reviews/summary
+  Public. 200 → { average, count, distribution }.
+
+GET /site-reviews/mine
+  Auth required. 200 → { items: Review[] (all statuses, newest first),
+  meta }.
+
+GET /site-reviews/:id
+  Public with optional auth. 200 → Review. 404 when: not found, or the
+  review is not APPROVED and the caller is not the owner.
+
+PATCH /site-reviews/:id
+  Auth required. Owner only (403 otherwise).
+  Body: { rating, title?, text } (same constraints as create).
+  200 → updated review. Status is reset to PENDING (resubmitted for
+  moderation) and any previous rejectReason is cleared.
+
+DELETE /site-reviews/:id
+  Auth required. Owner only (403 otherwise). 200 → { message }.
+
+────────────────────────────────────────────────────────────────────────
+ADMIN ENDPOINTS (`/api/admin/site-reviews`)
+────────────────────────────────────────────────────────────────────────
+
+Admin review shape = customer review shape + { userId, moderatedBy }.
+
+GET /admin/site-reviews
+  Admin auth + RBAC (site-review:view). All statuses.
+  Query: page (default 1), limit (default 20, max 50),
+         status = "PENDING" | "APPROVED" | "REJECTED",
+         rating (1..5), q (search text/title/reviewer name),
+         userId (UUID filter)
+  Ordering: PENDING first, then by rating desc, then newest.
+  200 → { items, meta }.
+
+GET /admin/site-reviews/:id
+  Admin auth + RBAC (site-review:view). 200 → admin review object.
+
+PATCH /admin/site-reviews/:id/approve
+  Admin auth + RBAC (site-review:moderate).
+  200 → admin review object, status now "APPROVED".
+  409 → already moderated (one-way moderation).
+
+PATCH /admin/site-reviews/:id/reject
+  Admin auth + RBAC (site-review:moderate).
+  Body: { reason?: string (<=255) }
+  200 → admin review object, status now "REJECTED".
+  409 → already moderated.
+
+DELETE /admin/site-reviews/:id
+  Admin auth + RBAC (site-review:delete). Hard delete (spam removal).
+  200 → deleted review object.
+
+════════════════════════════════════════════════════════════════════════════
+PAGES TO BUILD
+════════════════════════════════════════════════════════════════════════════
+
+CUSTOMER (dashboard route group):
+
+1. `app/(dashboard)/dashboard/site-reviews/page.tsx`
+   - Rating submission form (the «تجربه خود را به اشتراک بگذارید» CTA):
+     * Interactive 1–5 star picker (accessible: aria-labels, keyboard support).
+     * Optional title field (<=100 chars) with live counter.
+     * Textarea with live char counter: min 10, max 1000 chars, with a
+       clear inline hint when below the minimum.
+     * Submit button with loading state. On success show a success state
+       (PENDING submitted — «نظر شما با موفقیت ثبت شد و در انتظار بررسی
+       است»). On 409 show an inline notice + link to the "mine" page.
+     * Client-side validation must mirror the server (rating required,
+       text length), but ALSO display server validation errors.
+   - Below the form: public approved-reviews section:
+     * Summary header: average score, total count, and a 5-bar rating
+       distribution (5★→1★).
+     * Sort tabs: جدیدترین / بالاترین امتیاز / پایین‌ترین امتیاز.
+     * Rating filter (all / 5 / 4 / 3 / 2 / 1 stars) + optional search box.
+     * List: star rating, reviewer name, relative time, title (if any),
+       text, with graceful empty state ("هنوز نظری ثبت نشده است").
+     * Pagination (use meta: total, page, totalPages, hasNext/hasPrev).
+
+2. `app/(dashboard)/dashboard/site-reviews/mine/page.tsx`
+   - My reviews (all statuses) with status badges:
+     * PENDING → در انتظار بررسی (amber)
+     * APPROVED → تائید شده (green)
+     * REJECTED → رد شده (red) + rejectReason shown inline
+   - Each review: full content + created/moderated dates.
+   - Edit action → opens the same form (rating/title/text), submits via
+     PATCH (status returns to PENDING; clear the rejectReason notice).
+   - Delete action → SweetAlert confirmation → DELETE → remove from list.
+   - Empty state for users without a review: prompt to submit via the main
+     page.
+
+3. Navigation wiring:
+   - Register «نظرات سایت» in `desktopNavLinks` and the mobile menu
+     `navItems` of the dashboard layout (desktop + mobile), alongside the
+     notifications item.
+
+ADMIN (admin route group):
+
+4. `app/(admin)/admin/site-reviews/page.tsx`
+   - Queue-style table of all reviews:
+     * Filters: status (PENDING/APPROVED/REJECTED), rating (1..5), search
+       (text/title/reviewer name).
+     * PENDING rows visually highlighted first (server already sorts them
+       first).
+     * Row shows: reviewer name, rating (stars), title, text (truncated
+       with expand), status badge, createdAt, moderatedAt.
+     * Row actions:
+       - Approve → confirm/inline action → PATCH approve → toast.
+       - Reject → modal with optional reason field (<=255) → PATCH reject.
+       - Delete → SweetAlert confirm → DELETE (hard delete).
+     * 409 handling: if a review was already moderated (e.g. by someone
+       else), show the error and refresh the list.
+     * Pagination (meta).
+   - Register «نظرات» in the admin sidebar nav next to Support Tickets.
+
+════════════════════════════════════════════════════════════════════════════
+UI/UX CONSTRAINTS
+════════════════════════════════════════════════════════════════════════════
+
+- All user-facing copy in Persian (fa-IR), RTL, Tailwind-consistent with the
+  existing dashboard and admin pages.
+- Loading skeletons, error states with retry, and empty states everywhere.
+- Star components: reuse any existing star/rating component if one exists;
+  otherwise build one accessible, reusable component (e.g. `components/
+  stars/StarRating.tsx`) for both the picker and display.
+- Use the existing API helper + SweetAlert confirm pattern. No new
+  dependency unless strictly necessary.
+- Public listing and summary must work for guests (no auth required).
+- Submit / mine / admin pages require their respective sessions; redirect
+  to login on 401.
+
+════════════════════════════════════════════════════════════════════════════
+VERIFICATION (required before declaring done)
+════════════════════════════════════════════════════════════════════════════
+
+1. `npx tsc --noEmit` — clean (no new errors; fix all errors you introduce).
+2. `next build` — succeeds; the new routes appear in the build route table.
+3. Playwright spec `tests/site-reviews-ui.spec.ts` covering:
+   - Guest: public list renders, summary renders, submit redirects to login.
+   - User: submit review (success + 409 duplicate), mine page edit/delete,
+     status badges.
+   - Admin: queue shows PENDING first, approve/reject/delete actions work,
+     409 already-moderated handling.
+   Mind the breakpoint-scoping gotcha (#279) when writing responsive specs.
+4. If you change shared layout/nav files, re-run the existing Playwright
+   suites to catch regressions.
+
+════════════════════════════════════════════════════════════════════════════
+DELIVERABLE
+════════════════════════════════════════════════════════════════════════════
+
+- Feature branch in `rezvio-web` with a meaningful name (e.g.
+  `feat/site-reviews`), commits with conventional-commit messages, and a
+  PR to `develop` with a description covering: pages/components added,
+  endpoints consumed, tests run (tsc / build / Playwright) and their
+  results, plus any deviation from this contract.
+- Do NOT run Prisma/migration commands — backend concerns only.
+- Do NOT modify the API contract; if something is ambiguous, implement the
+  behavior described above and note it in the PR.
