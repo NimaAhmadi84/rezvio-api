@@ -927,8 +927,8 @@ export class BookingsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const cancelledBooking = await tx.booking.update({
+    const cancelledBooking = await this.prisma.$transaction(async (tx) => {
+      const cancelled = await tx.booking.update({
         where: { id },
         data: { status: BookingStatus.CANCELLED },
       });
@@ -944,8 +944,26 @@ export class BookingsService {
         });
       }
 
-      return cancelledBooking;
+      return cancelled;
     });
+
+    // ──── Phase 28A: Notify owner of simple cancellation ────
+    const bookingInfo = await this.prisma.booking.findUnique({
+      where: { id },
+      select: { business: { select: { ownerId: true } }, service: { select: { name: true } }, customer: { select: { name: true } } },
+    });
+
+    if (bookingInfo) {
+      this.notificationsService.create(
+        bookingInfo.business.ownerId,
+        NotificationType.BOOKING_CANCELLED,
+        'لغو رزرو',
+        `رزرو «${bookingInfo.service?.name || ''}» توسط ${bookingInfo.customer?.name || 'مشتری'} لغو شد.`,
+        { bookingId: id },
+      ).catch(() => {});
+    }
+
+    return cancelledBooking;
   }
 
   /**
@@ -1310,6 +1328,24 @@ export class BookingsService {
         this.logger.log(
           `📊 Batch update: ${updatedBookings.length} bookings → ${dto.status}, bookingsCount delta: ${totalBookingsCountDelta}`,
         );
+      }
+
+      // ──── Phase 28A: Notify customers of batch status change ────
+      for (const b of updatedBookings) {
+        const info = await this.prisma.booking.findUnique({
+          where: { id: b.id },
+          select: { customerId: true, service: { select: { name: true } } },
+        });
+        if (info) {
+          const sName = info.service?.name || 'رزرو';
+          if (dto.status === 'CONFIRMED') {
+            this.notificationsService.create(info.customerId, NotificationType.BOOKING_CONFIRMED, 'تأیید رزرو', `رزرو شما برای «${sName}» تأیید شد.`, { bookingId: b.id }).catch(() => {});
+          } else if (dto.status === 'CANCELLED') {
+            this.notificationsService.create(info.customerId, NotificationType.BOOKING_CANCELLED, 'لغو رزرو', `رزرو شما برای «${sName}» لغو شد.`, { bookingId: b.id }).catch(() => {});
+          } else if (dto.status === 'COMPLETED') {
+            this.notificationsService.create(info.customerId, NotificationType.BOOKING_COMPLETED, 'تکمیل رزرو', `رزرو شما برای «${sName}» تکمیل شد.`, { bookingId: b.id }).catch(() => {});
+          }
+        }
       }
 
       return {
