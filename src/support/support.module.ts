@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { AdminModule } from '../admin/admin.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { SupportTicketsService } from './support-tickets.service';
 import { SupportTicketsController } from './support-tickets.controller';
 import { AdminSupportService } from './admin-support.service';
@@ -29,7 +30,7 @@ import { AdminSupportController } from './admin-support.controller';
  *    اضافه می‌کنیم به exports.
  */
 @Module({
-  imports: [PrismaModule, AuthModule, AdminModule],
+  imports: [PrismaModule, AuthModule, AdminModule, NotificationsModule],
   controllers: [SupportTicketsController, AdminSupportController],
   providers: [SupportTicketsService, AdminSupportService],
 })
